@@ -141,15 +141,145 @@ def _key_manifest():
     }
 
 
-def _flatten_materials():
-    """Collapse every material to a bare, *named* Principled BSDF.
+def _collect_images(node_tree, depth=0, mat_name=""):
+    """Gather packed images per PBR role from nested node groups."""
+    import bpy
 
-    The source uses materialiq + "smart material" node groups whose deep node
-    trees make ``export_materials="EXPORT"`` pathologically slow (50+ min and
-    counting). The glTF only needs the material *names* so the web viewer can
-    re-author each part by name (web/src/scene-utils.js refineMaterials);
-    flattening keeps export in the seconds range while preserving per-part
-    material assignment.
+    found = {}
+    if node_tree is None or depth > 8:
+        return found
+    prefer_dapple = "dapple" in mat_name.lower()
+    for node in node_tree.nodes:
+        if node.type == "TEX_IMAGE" and node.image:
+            name = node.image.name.lower()
+            if "normal" in name and "dapple" not in name:
+                found.setdefault("normal", node.image)
+            elif "roughness" in name:
+                found.setdefault("rough", node.image)
+            elif "dapple" in name or "yiksong" in name:
+                found["base"] = node.image
+            elif "diffuse" in name or "color" in name or "albedo" in name:
+                found.setdefault("base", node.image)
+            elif not prefer_dapple:
+                found.setdefault("base", node.image)
+        elif node.type == "GROUP" and node.node_tree:
+            for key, img in _collect_images(
+                node.node_tree, depth + 1, mat_name
+            ).items():
+                if key == "base" and prefer_dapple and "dapple" not in img.name.lower():
+                    continue
+                found.setdefault(key, img)
+    return found
+
+
+def _snapshot_smart_material(nt):
+    """Read sy_plastic (and similar) group inputs before the tree is cleared."""
+    for node in nt.nodes:
+        if node.type != "GROUP" or node.node_tree is None:
+            continue
+        if not node.node_tree.name.startswith("sy_plastic"):
+            continue
+        color_in = node.inputs.get("Color")
+        rough_in = node.inputs.get("Roughness")
+        if color_in is None:
+            continue
+        color = tuple(color_in.default_value[:3])
+        rough = float(rough_in.default_value) if rough_in else 0.5
+        return {"color": color, "roughness": rough}
+    return None
+
+
+def _snapshot_material(mat):
+    import bpy
+
+    nt = mat.node_tree
+    snap = {
+        "smart": _snapshot_smart_material(nt),
+        "images": _collect_images(nt, mat_name=mat.name),
+    }
+    bsdf = next((n for n in nt.nodes if n.type == "BSDF_PRINCIPLED"), None)
+    if bsdf:
+        met = bsdf.inputs.get("Metallic")
+        if met and not met.is_linked:
+            snap["metallic"] = float(met.default_value)
+    return snap
+
+
+def _rebuild_flat_material(mat, snap):
+    """Replace deep node trees with Principled + optional image maps."""
+    import bpy
+
+    nt = mat.node_tree
+    nt.nodes.clear()
+    out = nt.nodes.new("ShaderNodeOutputMaterial")
+    bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
+    nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+
+    if snap.get("smart"):
+        color = snap["smart"]["color"]
+        bsdf.inputs["Base Color"].default_value = (*color, 1.0)
+        bsdf.inputs["Roughness"].default_value = snap["smart"]["roughness"]
+        # Lacquer: no metal, slight coat on shiny variants.
+        if "shiny" in mat.name.lower():
+            coat = bsdf.inputs.get("Coat Weight") or bsdf.inputs.get("Clearcoat")
+            if coat:
+                coat.default_value = 1.0
+            coat_r = bsdf.inputs.get("Coat Roughness") or bsdf.inputs.get(
+                "Clearcoat Roughness"
+            )
+            if coat_r:
+                coat_r.default_value = 0.05
+        return
+
+    images = snap.get("images") or {}
+    if "base" in images:
+        tex = nt.nodes.new("ShaderNodeTexImage")
+        tex.image = images["base"]
+        tex.image.colorspace_settings.name = "sRGB"
+        nt.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
+    if "rough" in images:
+        tex = nt.nodes.new("ShaderNodeTexImage")
+        tex.image = images["rough"]
+        tex.image.colorspace_settings.name = "Non-Color"
+        nt.links.new(tex.outputs["Color"], bsdf.inputs["Roughness"])
+    if "normal" in images:
+        tex = nt.nodes.new("ShaderNodeTexImage")
+        tex.image = images["normal"]
+        tex.image.colorspace_settings.name = "Non-Color"
+        norm = nt.nodes.new("ShaderNodeNormalMap")
+        nt.links.new(tex.outputs["Color"], norm.inputs["Color"])
+        nt.links.new(norm.outputs["Normal"], bsdf.inputs["Normal"])
+    elif "base" in images and "dapple" in mat.name.lower():
+        # Bench cushion: procedural cw-Bump used the same dapple tile in the .blend.
+        tex = nt.nodes.new("ShaderNodeTexImage")
+        tex.image = images["base"]
+        tex.image.colorspace_settings.name = "Non-Color"
+        bump = nt.nodes.new("ShaderNodeBump")
+        bump.inputs["Strength"].default_value = 0.25
+        bump.inputs["Distance"].default_value = 0.02
+        nt.links.new(tex.outputs["Color"], bump.inputs["Height"])
+        nt.links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
+        bsdf.inputs["Roughness"].default_value = 0.38
+    if snap.get("metallic") is not None:
+        bsdf.inputs["Metallic"].default_value = snap["metallic"]
+    elif any(k in mat.name.lower() for k in ("gold", "brass", "copper", "steel")):
+        bsdf.inputs["Metallic"].default_value = 1.0
+
+
+def _flatten_materials():
+    """Collapse every material to a bare Principled BSDF (fast glTF export).
+
+    The source uses materialiq + sy_plastic node groups that make a full
+    ``export_materials="EXPORT"`` crawl take 50+ minutes. We snapshot each
+    material's effective inputs first:
+
+    - ``sy_*`` smart lacquer/ivory: procedural (no bitmaps) — copy group Color
+      and Roughness into Principled so the GLB is not default gray.
+    - Wood / metal / plastic: packed images from the .blend — wire diffuse,
+      roughness, and normal into a shallow Principled tree for glTF export.
+
+    The web viewer still refines ``sy_*`` lacquer (scene-utils.js) because
+    procedural noise does not survive export; wood/metal can use GLB maps.
     """
     import bpy
 
@@ -157,11 +287,8 @@ def _flatten_materials():
     for mat in list(bpy.data.materials):
         if not mat.use_nodes or mat.node_tree is None:
             continue
-        nt = mat.node_tree
-        nt.nodes.clear()
-        out = nt.nodes.new("ShaderNodeOutputMaterial")
-        bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
-        nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+        snap = _snapshot_material(mat)
+        _rebuild_flat_material(mat, snap)
         flattened += 1
     return flattened
 

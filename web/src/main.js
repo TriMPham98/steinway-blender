@@ -48,7 +48,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 0.98;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 viewport.appendChild(renderer.domElement);
@@ -63,10 +63,10 @@ controls.minDistance = 1.0;
 controls.maxDistance = 12;
 controls.maxPolarAngle = Math.PI * 0.49;
 
-// Dark studio: the IBL (scene.environment) does the fill; a warm key light
-// carves the form + casts the contact shadow, a cool rim separates the lid.
-scene.add(new THREE.HemisphereLight(0x20242c, 0x05060a, 0.25));
-const keyLight = new THREE.DirectionalLight(0xfff4e6, 2.1);
+// Low-key studio: strong IBL + clearcoat turns black lacquer gray; sy_* skips
+// env maps and relies on these controlled direct lights for shape/highlights.
+scene.add(new THREE.HemisphereLight(0x242a36, 0x06080c, 0.28));
+const keyLight = new THREE.DirectionalLight(0xfff4e8, 1.65);
 keyLight.position.set(3.2, 5.5, 2.4);
 keyLight.castShadow = true;
 keyLight.shadow.mapSize.set(2048, 2048);
@@ -79,9 +79,12 @@ keyLight.shadow.camera.bottom = -3;
 keyLight.shadow.bias = -0.0004;
 keyLight.shadow.normalBias = 0.02;
 scene.add(keyLight);
-const rim = new THREE.DirectionalLight(0x9ab4e8, 0.6);
+const rim = new THREE.DirectionalLight(0x88a0c8, 0.38);
 rim.position.set(-4, 3, -4);
 scene.add(rim);
+const fill = new THREE.DirectionalLight(0xa09890, 0.22);
+fill.position.set(-1, 2, 4);
+scene.add(fill);
 
 createStudioGround(scene);
 

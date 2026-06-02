@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment.js";
 
 /**
  * Center model on ground and scale to a reasonable size for the viewer.
@@ -78,20 +77,78 @@ export function stripEmbeddedGround(root) {
 }
 
 const SRGB = THREE.SRGBColorSpace;
+const DATA = THREE.NoColorSpace;
 
-function metalize(mat, color, roughness) {
-  mat.color = new THREE.Color(color);
-  mat.metalness = 1.0;
-  mat.roughness = roughness;
-  mat.envMapIntensity = 1.3;
+/** glTF color/normal/roughness maps from steinway_grand_playable export. */
+function prepMaps(mat) {
   if (mat.map) mat.map.colorSpace = SRGB;
+  if (mat.normalMap) mat.normalMap.colorSpace = DATA;
+  if (mat.roughnessMap) mat.roughnessMap.colorSpace = DATA;
+  if (mat.metalnessMap) mat.metalnessMap.colorSpace = DATA;
+  if (mat.aoMap) mat.aoMap.colorSpace = DATA;
+}
+
+function lacquerFromExport(mat, { matte, lite }) {
+  const color = mat.color?.clone() ?? new THREE.Color(lite ? 0xcfc8b8 : 0x000000);
+  const roughness =
+    typeof mat.roughness === "number"
+      ? mat.roughness
+      : matte
+        ? lite
+          ? 0.85
+          : 1.0
+        : 0.1;
+  return new THREE.MeshPhysicalMaterial({
+    color,
+    roughness,
+    metalness: 0,
+    clearcoat: matte ? (lite ? 0 : 0.15) : lite ? 0.3 : 0.75,
+    clearcoatRoughness: matte ? 0.38 : lite ? 0.26 : 0.06,
+    envMapIntensity: lite ? 0.08 : 0.05,
+    specularIntensity: lite ? 0.45 : 0.55,
+    specularColor: new THREE.Color(lite ? 0xffffff : 0x9999a0),
+  });
+}
+
+/** Seat Cushion — CW-Plastic-Dapple tile from the .blend (not flat gray plastic). */
+function dappleCushion(mat) {
+  const opts = {
+    name: mat.name,
+    color: new THREE.Color(0xffffff),
+    metalness: 0,
+    roughness: typeof mat.roughness === "number" ? mat.roughness : 0.38,
+    envMapIntensity: 0.55,
+  };
+  if (mat.map) {
+    opts.map = mat.map;
+    opts.bumpMap = mat.bumpMap ?? mat.normalMap ?? mat.map;
+    opts.bumpScale = mat.bumpScale > 0 ? mat.bumpScale : 0.14;
+  }
+  if (mat.roughnessMap) opts.roughnessMap = mat.roughnessMap;
+  if (mat.normalMap) {
+    opts.normalMap = mat.normalMap;
+    delete opts.bumpMap;
+    delete opts.bumpScale;
+  }
+  const next = new THREE.MeshStandardMaterial(opts);
+  prepMaps(next);
+  return next;
+}
+
+function tuneMetal(mat, fallbackColor, fallbackRough) {
+  prepMaps(mat);
+  mat.metalness = 1.0;
+  if (!mat.roughnessMap && typeof mat.roughness !== "number") {
+    mat.roughness = fallbackRough;
+  }
+  mat.envMapIntensity = 0.45;
+  if (!mat.map) mat.color = new THREE.Color(fallbackColor);
   return mat;
 }
 
 /**
- * The GLB's procedural "smart material" body/keys arrive flat from glTF (node
- * groups don't translate), so pin them by material name; metals/wood keep their
- * exported image textures and just get sensible PBR + IBL response.
+ * Materials from export_glb.py: sy_* base colors from the .blend, wood/metal maps
+ * embedded. Lacquer/ivory get clearcoat here; textured parts keep their GLB maps.
  * @param {THREE.Object3D} root
  */
 export function refineMaterials(root) {
@@ -104,56 +161,40 @@ export function refineMaterials(root) {
     let next = mat;
 
     if (/^sy_lite/i.test(name)) {
-      // Ivory white keys + light parts.
-      const matte = /matte/i.test(name);
-      next = new THREE.MeshPhysicalMaterial({
-        color: 0xece4d2,
-        roughness: matte ? 0.6 : 0.36,
-        metalness: 0,
-        clearcoat: matte ? 0 : 0.35,
-        clearcoatRoughness: 0.25,
-        envMapIntensity: 0.5,
-      });
+      next = lacquerFromExport(mat, { matte: /matte/i.test(name), lite: true });
     } else if (/^sy_/i.test(name)) {
-      // Every other smart material = polished black lacquer body / ebony keys.
-      // Keep envMapIntensity low so the bright IBL doesn't wash the black to gray;
-      // clearcoat still gives the lacquered specular highlights.
-      const matte = /matte/i.test(name);
-      next = new THREE.MeshPhysicalMaterial({
-        color: 0x08080a,
-        roughness: matte ? 0.5 : 0.12,
-        metalness: 0,
-        clearcoat: matte ? 0.2 : 1.0,
-        clearcoatRoughness: 0.05,
-        envMapIntensity: matte ? 0.25 : 0.45,
-      });
+      next = lacquerFromExport(mat, { matte: /matte/i.test(name), lite: false });
     } else if (/gold/i.test(name)) {
-      next = metalize(mat, 0xd4af37, 0.3);
+      next = tuneMetal(mat, 0xd4af37, 0.3);
     } else if (/brass/i.test(name)) {
-      next = metalize(mat, 0xc6a456, 0.32);
+      next = tuneMetal(mat, 0xc6a456, 0.32);
     } else if (/copper/i.test(name)) {
-      next = metalize(mat, 0xb87333, 0.34);
+      next = tuneMetal(mat, 0xb87333, 0.34);
     } else if (/steel|chrome|metal/i.test(name)) {
-      next = metalize(mat, 0xc2c6cd, 0.28);
+      next = tuneMetal(mat, 0xc2c6cd, 0.28);
     } else if (/wood|beech|maple/i.test(name)) {
-      // Flattened on export (node-group textures bake too slowly); warm solid
-      // wood tone, and keep a map if a textured GLB is ever loaded.
-      mat.color = new THREE.Color(0x7c5a3a);
+      prepMaps(mat);
       mat.metalness = 0;
-      mat.roughness = 0.55;
-      mat.envMapIntensity = 0.9;
-      if (mat.map) mat.map.colorSpace = SRGB;
+      if (!mat.roughnessMap && typeof mat.roughness !== "number") {
+        mat.roughness = 0.55;
+      }
+      mat.envMapIntensity = 0.55;
+      if (!mat.map) mat.color = new THREE.Color(0x7c5a3a);
       next = mat;
-    } else if (/plastic|dapple/i.test(name)) {
-      mat.color = new THREE.Color(0x141416);
+    } else if (/dapple|CW-Plastic/i.test(name)) {
+      next = dappleCushion(mat);
+    } else if (/plastic/i.test(name)) {
+      prepMaps(mat);
       mat.metalness = 0;
-      mat.roughness = 0.7;
-      mat.envMapIntensity = 0.6;
+      mat.roughness = mat.roughness ?? 0.5;
+      mat.envMapIntensity = 0.5;
+      if (!mat.map) mat.color = new THREE.Color(0x141416);
+      else mat.color.setRGB(1, 1, 1);
       next = mat;
     } else {
-      mat.color = new THREE.Color(0x2a2a2e);
+      prepMaps(mat);
+      if (!mat.map) mat.color = new THREE.Color(0x2a2a2e);
       mat.envMapIntensity = 0.8;
-      if (mat.map) mat.map.colorSpace = SRGB;
       next = mat;
     }
 
@@ -186,15 +227,28 @@ function radialBackground(inner, outer) {
   return tex;
 }
 
+/** Low-key PMREM so metal/wood get subtle reflections without washing black lacquer. */
+function darkStudioEnvironment(pmrem) {
+  const envScene = new THREE.Scene();
+  envScene.add(new THREE.AmbientLight(0x1a1e28, 0.35));
+  const soft = new THREE.DirectionalLight(0x9098a8, 0.55);
+  soft.position.set(2, 4, 3);
+  envScene.add(soft);
+  const fill = new THREE.DirectionalLight(0x303848, 0.28);
+  fill.position.set(-3, 1, -2);
+  envScene.add(fill);
+  return pmrem.fromScene(envScene, 0.06).texture;
+}
+
 /**
- * Image-based lighting (procedural studio) + dark gradient backdrop + fog.
- * Reflections on the lacquer/metal come from scene.environment.
+ * Dark gradient backdrop + low-key IBL. Lacquer (sy_*) ignores env maps;
+ * brass/wood use a dim environment so they do not blow out to gray.
  */
 export function setupEnvironment(renderer, scene) {
   const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-  scene.background = radialBackground("#16181f", "#05060a");
-  scene.fog = new THREE.Fog(0x05060a, 7, 24);
+  scene.environment = darkStudioEnvironment(pmrem);
+  scene.background = radialBackground("#1a1e28", "#06080e");
+  scene.fog = new THREE.Fog(0x06080e, 10, 30);
   pmrem.dispose();
   return scene.environment;
 }
