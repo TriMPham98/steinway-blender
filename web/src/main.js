@@ -5,10 +5,13 @@ import { PianoController } from "./piano.js";
 import { LiveSession } from "./live.js";
 import { backendAvailable, findDefaultPort, listInputPorts } from "./midi.js";
 import {
-  brightenMaterials,
+  createStudioGround,
   fitCameraToModel,
   frameModel,
+  refineMaterials,
+  setupEnvironment,
   setupShadows,
+  stripEmbeddedGround,
 } from "./scene-utils.js";
 
 const MODEL_URL = "/models/steinway.glb";
@@ -31,7 +34,6 @@ const ui = {
 const viewport = document.getElementById("viewport");
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x12151c);
 
 const camera = new THREE.PerspectiveCamera(
   38,
@@ -46,41 +48,42 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.45;
+renderer.toneMappingExposure = 1.05;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 viewport.appendChild(renderer.domElement);
+
+setupEnvironment(renderer, scene);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 0.82, 0);
 controls.enableDamping = true;
 controls.dampingFactor = 0.06;
-controls.minDistance = 0.85;
-controls.maxDistance = 4.5;
-controls.maxPolarAngle = Math.PI * 0.48;
+controls.minDistance = 1.0;
+controls.maxDistance = 12;
+controls.maxPolarAngle = Math.PI * 0.49;
 
-scene.add(new THREE.HemisphereLight(0xdce8ff, 0x2a3038, 0.65));
-scene.add(new THREE.AmbientLight(0xffffff, 0.35));
-const keyLight = new THREE.DirectionalLight(0xfff8f0, 1.65);
-keyLight.position.set(3, 5, 2);
+// Dark studio: the IBL (scene.environment) does the fill; a warm key light
+// carves the form + casts the contact shadow, a cool rim separates the lid.
+scene.add(new THREE.HemisphereLight(0x20242c, 0x05060a, 0.25));
+const keyLight = new THREE.DirectionalLight(0xfff4e6, 2.1);
+keyLight.position.set(3.2, 5.5, 2.4);
 keyLight.castShadow = true;
 keyLight.shadow.mapSize.set(2048, 2048);
+keyLight.shadow.camera.near = 0.5;
+keyLight.shadow.camera.far = 16;
+keyLight.shadow.camera.left = -3;
+keyLight.shadow.camera.right = 3;
+keyLight.shadow.camera.top = 3;
+keyLight.shadow.camera.bottom = -3;
+keyLight.shadow.bias = -0.0004;
+keyLight.shadow.normalBias = 0.02;
 scene.add(keyLight);
-const fill = new THREE.DirectionalLight(0x9ab4e8, 0.55);
-fill.position.set(-3, 2, -2);
-scene.add(fill);
-const rim = new THREE.DirectionalLight(0xffffff, 0.35);
-rim.position.set(0, 2, -4);
+const rim = new THREE.DirectionalLight(0x9ab4e8, 0.6);
+rim.position.set(-4, 3, -4);
 scene.add(rim);
 
-const ground = new THREE.Mesh(
-  new THREE.CircleGeometry(3.2, 64),
-  new THREE.MeshStandardMaterial({ color: 0x141820, roughness: 0.92 }),
-);
-ground.rotation.x = -Math.PI / 2;
-ground.position.y = -0.02;
-ground.receiveShadow = true;
-scene.add(ground);
+createStudioGround(scene);
 
 const loader = new GLTFLoader();
 const raycaster = new THREE.Raycaster();
@@ -231,9 +234,10 @@ async function init() {
   ]);
 
   const model = gltf.scene;
+  stripEmbeddedGround(model);
   scene.add(model);
   frameModel(model);
-  brightenMaterials(model);
+  refineMaterials(model);
   setupShadows(model);
   fitCameraToModel(camera, controls, model);
 

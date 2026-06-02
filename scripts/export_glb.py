@@ -64,6 +64,27 @@ def _strip_lid_hinge():
     bpy.data.objects.remove(hinge, do_unlink=True)
 
 
+def _strip_scene_props():
+    """Delete non-piano scene meshes (e.g. the ``Floor`` plane / backdrops).
+
+    The source asset is a full scene: a 30x66m ``Floor`` plane is welded into the
+    static join, which blows up the glTF bounding box so the web viewer auto-fit
+    shrinks the piano to a speck. Drop any non-key / non-pedal mesh that is either
+    named ``Floor`` or larger than a real grand piano (> 5m in any axis).
+    """
+    import bpy
+
+    removed = []
+    for obj in list(bpy.data.objects):
+        if obj.type != "MESH" or _is_key(obj) or _is_pedal(obj):
+            continue
+        dims = obj.dimensions
+        if obj.name == "Floor" or max(dims.x, dims.y, dims.z) > 5.0:
+            removed.append(obj.name)
+            bpy.data.objects.remove(obj, do_unlink=True)
+    return removed
+
+
 def _join_static():
     import bpy
 
@@ -120,6 +141,31 @@ def _key_manifest():
     }
 
 
+def _flatten_materials():
+    """Collapse every material to a bare, *named* Principled BSDF.
+
+    The source uses materialiq + "smart material" node groups whose deep node
+    trees make ``export_materials="EXPORT"`` pathologically slow (50+ min and
+    counting). The glTF only needs the material *names* so the web viewer can
+    re-author each part by name (web/src/scene-utils.js refineMaterials);
+    flattening keeps export in the seconds range while preserving per-part
+    material assignment.
+    """
+    import bpy
+
+    flattened = 0
+    for mat in list(bpy.data.materials):
+        if not mat.use_nodes or mat.node_tree is None:
+            continue
+        nt = mat.node_tree
+        nt.nodes.clear()
+        out = nt.nodes.new("ShaderNodeOutputMaterial")
+        bsdf = nt.nodes.new("ShaderNodeBsdfPrincipled")
+        nt.links.new(bsdf.outputs["BSDF"], out.inputs["Surface"])
+        flattened += 1
+    return flattened
+
+
 def main():
     import bpy
 
@@ -130,22 +176,28 @@ def main():
 
     t0 = time.time()
     _strip_lid_hinge()
+    stripped = _strip_scene_props()
     merged = _join_static()
     manifest = _key_manifest()
     with open(manifest_path, "w", encoding="utf-8") as fh:
         json.dump(manifest, fh, indent=2)
 
+    flattened = _flatten_materials()
     bpy.ops.export_scene.gltf(
         filepath=out_glb,
         export_format="GLB",
         export_extras=True,
         export_apply=False,
-        # Full PBR bake is very slow on this asset; placeholders keep materials
-        # in the glTF and let the site finish export in seconds.
-        export_materials="PLACEHOLDER",
+        # Materials are flattened to bare *named* Principled BSDFs just above
+        # (_flatten_materials): the source's materialiq / smart-material node
+        # groups make a real EXPORT pathologically slow (50+ min). The web viewer
+        # re-authors each part by material name (scene-utils.js refineMaterials).
+        export_materials="EXPORT",
     )
+    print(f"[export] flattened materials: {flattened}")
     size_mb = os.path.getsize(out_glb) / 1e6
     elapsed = time.time() - t0
+    print(f"[export] stripped scene props: {stripped}")
     print(f"[export] merged {merged} static meshes -> Piano_Static")
     print(f"[export] keys in manifest: {len(manifest['keys'])}")
     print(f"[export] wrote {out_glb} ({size_mb:.1f} MB, {elapsed:.0f}s)")
