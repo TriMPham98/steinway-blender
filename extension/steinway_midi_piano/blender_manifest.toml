@@ -1,0 +1,22 @@
+schema_version = "1.0.0"
+
+id = "steinway_midi_piano"
+version = "0.1.0"
+name = "Steinway MIDI Piano"
+tagline = "Play a procedural Steinway Model D live from MIDI"
+maintainer = "Tri <trimpham98@gmail.com>"
+type = "add-on"
+
+tags = ["3D View", "Animation", "Object"]
+blender_version_min = "4.2.0"
+
+license = [
+  "SPDX:GPL-3.0-or-later",
+]
+
+# Bundled native dependency. python-rtmidi has no prebuilt cp313 macOS wheel, so
+# this wheel is compiled locally (see scripts/build_wheel.sh) and is specific to
+# macOS arm64 / CPython 3.13. Rebuild it for other platforms.
+wheels = [
+  "./wheels/python_rtmidi-1.5.8-cp313-cp313-macosx_14_0_arm64.whl",
+]

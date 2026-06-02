@@ -1,0 +1,19 @@
+# Blender
+*.blend1
+*.blend2
+
+# Python
+__pycache__/
+*.pyc
+
+# Generated assets (regenerate via scripts/generate_piano.py --save)
+/assets/*.blend
+
+# Built extension zip (regenerate via: blender --command extension build ...)
+/extension/*.zip
+
+# OS
+.DS_Store
+
+# Claude Code machine-local settings
+.claude/settings.local.json
