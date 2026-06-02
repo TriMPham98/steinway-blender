@@ -21,6 +21,9 @@ class LiveState:
     targets: dict = field(default_factory=dict)
     current: dict = field(default_factory=dict)
     active: set = field(default_factory=set)
+    physically_down: set = field(default_factory=set)   # keys with a finger on them
+    sustained: set = field(default_factory=set)          # keys held down by the pedal
+    sustain_on: bool = False                             # CC64 damper pedal state
 
 
 def build_note_map():
@@ -33,12 +36,34 @@ def build_note_map():
     return out
 
 
+def _apply_target(state, note):
+    """A key is down if a finger is on it OR the pedal is holding it."""
+    down = note in state.physically_down or note in state.sustained
+    state.targets[note] = 1.0 if down else 0.0
+    state.active.add(note)
+
+
 def set_note(state, note, pressed):
-    """Register a note-on (pressed=True) or note-off (pressed=False)."""
+    """Finger down (pressed=True) or up (False), honoring the sustain pedal."""
     if note not in state.note_map:
         return
-    state.targets[note] = 1.0 if pressed else 0.0
-    state.active.add(note)
+    if pressed:
+        state.physically_down.add(note)
+        state.sustained.discard(note)       # a re-struck key is no longer pedal-only
+    else:
+        state.physically_down.discard(note)
+        if state.sustain_on:
+            state.sustained.add(note)        # pedal keeps it down after release
+    _apply_target(state, note)
+
+
+def set_sustain(state, on):
+    """Sustain pedal (CC64) down (on=True) or up. Lifting releases pedal-held keys."""
+    state.sustain_on = on
+    if not on:
+        for note in list(state.sustained):
+            state.sustained.discard(note)
+            _apply_target(state, note)
 
 
 def ease_step(state, press_angle, smoothing):
@@ -67,3 +92,6 @@ def reset(state):
     state.targets.clear()
     state.current.clear()
     state.active.clear()
+    state.physically_down.clear()
+    state.sustained.clear()
+    state.sustain_on = False

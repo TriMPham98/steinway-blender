@@ -46,6 +46,24 @@ def main():
     print(f"[selftest] released rotation.x = {up:.6f}")
     assert abs(up) < 1e-3, "released key did not return flat"
 
+    # Sustain pedal: a released note stays down until the pedal lifts.
+    anim.set_sustain(state, True)
+    anim.set_note(state, 64, True)
+    for _ in range(60):
+        anim.ease_step(state, press_angle, 0.5)
+    anim.set_note(state, 64, False)   # finger up, pedal still down
+    for _ in range(60):
+        anim.ease_step(state, press_angle, 0.5)
+    held = state.note_map[64].rotation_euler.x
+    print(f"[selftest] sustained rotation.x = {held:.4f}")
+    assert held > press_angle * 0.9, "sustained key should stay down while pedal held"
+
+    anim.set_sustain(state, False)
+    for _ in range(60):
+        anim.ease_step(state, press_angle, 0.5)
+    assert abs(state.note_map[64].rotation_euler.x) < 1e-3, "key should lift when pedal releases"
+    print("[selftest] sustain OK")
+
     print("[selftest] OK")
 
 

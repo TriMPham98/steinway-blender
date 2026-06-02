@@ -95,8 +95,11 @@ class STEINWAY_OT_live(bpy.types.Operator):
             return self._finish(context)
         if event.type == "TIMER":
             try:
-                for note, pressed in midi.drain(self._port):
-                    anim.set_note(self._state, note, pressed)
+                for ev in midi.drain(self._port):
+                    if ev[0] == "note":
+                        anim.set_note(self._state, ev[1], ev[2])
+                    elif ev[0] == "sustain":
+                        anim.set_sustain(self._state, ev[1])
                 anim.ease_step(self._state, props.press_angle, props.smoothing)
             except Exception as exc:  # noqa: BLE001
                 self.report({"ERROR"}, f"MIDI error: {exc}")
