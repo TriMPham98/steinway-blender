@@ -1,15 +1,16 @@
 """Steinway MIDI Piano.
 
-Play a procedural Steinway Model D in Blender, live, from a MIDI keyboard
+Play an imported Steinway grand in Blender, live, from a MIDI keyboard
 (developed against a Yamaha P515). The package is split into:
 
-  build/   - pure procedural geometry (keyboard + case), no MIDI
+  build/   - retarget step that splits the imported model's joined key meshes
+             into 88 MIDI-tagged key objects (+ sustain pedal), no MIDI
   midi.py  - thin mido wrapper (no bpy)
   anim.py  - note -> key-rotation state machine (bpy, main thread only)
   props,operators,panel - the add-on UI glue
 
 The build/ and anim/ modules are intentionally import-safe without the MIDI
-backend so the model can be generated and tested headlessly.
+backend so the model can be prepared and tested headlessly.
 """
 
 from . import props, operators, panel

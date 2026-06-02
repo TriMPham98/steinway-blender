@@ -43,15 +43,15 @@ def open_input(name):
 def drain(port):
     """Drain pending messages -> list of tagged events. Non-blocking.
 
-    ('note', note:int, pressed:bool)  note on/off (velocity 0 counts as off)
+    ('note', note:int, velocity:int)  note on (1..127) / off (velocity 0)
     ('sustain', on:bool)              CC64 damper pedal crossing the 64 threshold
     """
     events = []
     for msg in port.iter_pending():
         if msg.type == "note_on":
-            events.append(("note", msg.note, msg.velocity > 0))
+            events.append(("note", msg.note, msg.velocity))
         elif msg.type == "note_off":
-            events.append(("note", msg.note, False))
+            events.append(("note", msg.note, 0))
         elif msg.type == "control_change" and msg.control == 64:
             events.append(("sustain", msg.value >= 64))
     return events

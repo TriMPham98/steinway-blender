@@ -31,10 +31,15 @@ class STEINWAY_Props(bpy.types.PropertyGroup):
         default=math.radians(3.5), min=0.0, max=math.radians(12.0),
         subtype="ANGLE",
     )
-    smoothing: bpy.props.FloatProperty(
-        name="Smoothing",
-        description="Key easing per tick (1.0 = instant snap, lower = softer)",
-        default=0.5, min=0.05, max=1.0,
+    snappiness: bpy.props.FloatProperty(
+        name="Snappiness",
+        description="Key spring stiffness - higher snaps keys down and back faster",
+        default=1.0, min=0.3, max=3.0,
+    )
+    velocity_sensitivity: bpy.props.FloatProperty(
+        name="Velocity Sensitivity",
+        description="How much how hard you play affects key speed (0 = uniform)",
+        default=1.0, min=0.0, max=2.0,
     )
     running: bpy.props.BoolProperty(name="Running", default=False)
 

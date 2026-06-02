@@ -1,11 +1,13 @@
 # Steinway MIDI Piano (Blender)
 
-A procedural **Steinway Model D** grand piano for Blender 5.x that you play **live**
-from a MIDI keyboard (built for a **Yamaha P515**). Press a key on your piano and the
-matching key moves in the Blender viewport in real time.
+Play an **imported, high-detail Steinway grand** in Blender 5.x that you drive
+**live** from a MIDI keyboard (built for a **Yamaha P515**). Press a key on your
+piano and the matching key moves in the Blender viewport in real time — snapping
+down faster the harder you strike — and the sustain pedal tips when you hold CC64.
 
-- Fully scripted model: an 88-key keyboard precisely mapped to MIDI notes 21–108,
-  plus a recognizable, swappable Model D case.
+- Drives a real, swappable model (`SteinwayGrandPiano.blend`): a one-time
+  **Prepare** step splits its joined key meshes into 88 objects precisely mapped
+  to MIDI notes 21–108, each pivoting at its rear hinge.
 - Live MIDI via `mido` + `python-rtmidi`, drained non-blocking each tick — no
   keyframes, low latency, `bpy` stays on the main thread.
 - Packaged as a Blender **extension** with the native MIDI backend wheel bundled,
@@ -14,6 +16,10 @@ matching key moves in the Blender viewport in real time.
 ## Requirements
 
 - Blender 4.2+ (developed on Blender 5.1, macOS 14 arm64).
+- An imported grand-piano `.blend` whose keys are two joined meshes named
+  `White Keys` (52 keys) and `Black Keys` (36 keys) — e.g. the
+  `SteinwayGrandPiano.blend` this add-on was built against. A separate
+  `Right Sustain Pedal` mesh is optional (enables the pedal tilt).
 - A class-compliant USB-MIDI keyboard (e.g. Yamaha P515) connected over USB.
 - The bundled wheel is **macOS arm64 / CPython 3.13**. On other platforms, rebuild
   it with `scripts/build_wheel.sh` (needs a CPython 3.13 with dev headers).
@@ -33,51 +39,66 @@ matching key moves in the Blender viewport in real time.
    /Applications/Blender.app/Contents/MacOS/Blender --command extension build \
      --source-dir extension/steinway_midi_piano --output-dir extension/
    ```
-   This writes `extension/steinway_midi_piano-0.1.0.zip`.
+   This writes `extension/steinway_midi_piano-0.4.2.zip`.
 3. In Blender: **Edit → Preferences → Get Extensions → ▾ → Install from Disk…**,
-   pick `extension/steinway_midi_piano-0.1.0.zip`. Blender installs the bundled
-   `python-rtmidi` wheel automatically. Enable **Steinway MIDI Piano**.
+   pick that zip. Blender installs the bundled `python-rtmidi` wheel automatically.
+   Enable **Steinway MIDI Piano**.
 
 ## Play
 
-1. Open the **Steinway MIDI** tab in the 3D viewport sidebar (press `N`).
-2. Click **Build Piano** to generate the model.
-3. Plug in your P515, then set **Port** to your piano (shows as “P-515” / a digital
+1. Open your Steinway model (`SteinwayGrandPiano.blend`, or a file already baked by
+   `scripts/prepare_model.py`).
+2. Open the **Steinway MIDI** tab in the 3D viewport sidebar (press `N`).
+3. Click **Prepare Imported Keys** — this splits the joined key meshes into 88
+   MIDI-mapped keys and tags the sustain pedal. (An already-prepared file shows
+   *Keys ready* and skips this.)
+4. Plug in your P515, then set **Port** to your piano (shows as “P-515” / a digital
    piano / USB-MIDI device).
-4. Click **Start** ▶ and play — keys move live. **Stop** (or `Esc`) ends and
-   releases the port.
-5. Tune the feel with **Press Angle** and **Smoothing**.
+5. Click **Start** ▶ and play — keys move live and the pedal tips when you hold
+   sustain. **Stop** (or `Esc`) ends and releases the port.
+6. Tune the feel with **Press Angle** (depth), **Snappiness** (key speed), and
+   **Velocity Sensitivity** (how much dynamics affect the motion).
 
 ## How it works
 
 | File | Role |
 |---|---|
-| `build/keyboard.py` | 88 keys as objects `Key.021…Key.108`, origins at the rear hinge, tagged with a `midi_note` property |
-| `build/case.py` | procedural Model D body (own collection, swappable) |
-| `build/_geom.py` | shared bmesh/material helpers |
-| `midi.py` | `mido` wrapper; drains note on/off non-blocking via `iter_pending()` |
-| `anim.py` | eases each pressed key toward `current * press_angle` about local +X |
-| `operators.py` | modal operator + ~100 Hz timer gluing MIDI → key rotation |
+| `build/retarget.py` | splits the imported `White Keys`/`Black Keys` meshes into 88 objects `Key.021…Key.108` (origins at the rear hinge, tagged `midi_note`/`key_color`); re-origins + tags `Right Sustain Pedal`; centers the logo + tidies collection names |
+| `build/_geom.py` | collection helpers used by the retarget step |
+| `midi.py` | `mido` wrapper; drains note on/off + CC64 non-blocking via `iter_pending()` |
+| `anim.py` | per-key velocity-driven spring-damper about local +X (hard strikes snap down fast, crisp key-bed bottom-out, snappy release); tips the tagged pedal on sustain |
+| `operators.py` | Prepare operator + modal operator + ~100 Hz timer gluing MIDI → key/pedal rotation |
 | `props.py`, `panel.py` | the N-panel and its settings |
 
-MIDI note-on with velocity 0 is treated as note-off; notes outside 21–108 are ignored.
+Note-on **velocity** sets how fast the key snaps down (every note still travels
+the full depth); velocity 0 is treated as note-off; notes outside 21–108 are
+ignored. CC64 ≥ 64 tips the sustain pedal; keys follow your fingers only (the
+pedal does not hold keys down yet — damper/hammer action is planned).
 
 ## Headless / dev
 
 ```bash
 B=/Applications/Blender.app/Contents/MacOS/Blender
-$B --background --python scripts/generate_piano.py          # build + verify (88 keys)
-$B --background --python scripts/generate_piano.py -- --save # also write assets/steinway_d.blend
-$B --background --python scripts/selftest.py                 # animation self-test, no hardware
+# split + verify an imported model (88 keys, 52/36, MIDI 21..108, pedal tagged):
+$B --background assets/SteinwayGrandPiano.blend --python scripts/prepare_model.py
+# also bake a ready-to-play file (the source is opened read-only):
+$B --background assets/SteinwayGrandPiano.blend --python scripts/prepare_model.py -- \
+   --out assets/steinway_grand_playable.blend
+# hermetic splitter + anim self-test, no hardware or model needed:
+$B --background --python scripts/selftest.py
 bash scripts/build_wheel.sh                                  # (re)build the python-rtmidi wheel
 ```
 
+> `assets/*.blend` is git-ignored — the ~103 MB source model and the baked playable
+> file stay local and are never committed.
+
 ## Scope / roadmap
 
-v1 is **keys-only** (clean press/release). Designed-in extension points for later:
-velocity-driven motion/glow, sustain pedal (CC64), hammers & dampers action,
-keyframe recording for rendered video, and swapping the procedural case for an
-imported high-detail body.
+v1 drives **velocity-sensitive keys + a sustain-pedal tilt**: keys follow your
+fingers with a spring-damper whose attack speed tracks how hard you play, and the
+pedal moves with CC64. Designed-in extension points for later: **hammer/damper
+action** (so sustain actually holds notes), velocity-driven glow, and keyframe
+recording for rendered video.
 
 ## Troubleshooting
 
@@ -85,4 +106,9 @@ imported high-detail body.
   the panel’s *Install MIDI Backend* button. On non-macOS-arm64, rebuild the wheel.
 - **No ports / piano not listed** — connect the piano first, then reopen the Port
   dropdown.
-- **Keys don’t move** — click *Build Piano* first and make sure *Start* is active.
+- **“Joined key meshes not found”** — open a model that has `White Keys` and
+  `Black Keys` meshes before clicking *Prepare Imported Keys*.
+- **Keys don’t move** — click *Prepare Imported Keys* first and make sure *Start* is
+  active.
+- **Bass/treble reversed** — `retarget.split_keys` auto-detects orientation from the
+  white/black pattern; if a non-standard model trips the check, the error says so.

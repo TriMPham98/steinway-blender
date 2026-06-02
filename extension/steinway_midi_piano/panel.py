@@ -16,7 +16,11 @@ class STEINWAY_PT_panel(bpy.types.Panel):
         layout = self.layout
         props = context.scene.steinway
 
-        layout.operator("steinway.build", icon="OUTLINER_OB_MESH")
+        ready = sum(1 for o in bpy.data.objects if o.get("midi_note") is not None)
+        if ready >= 88:
+            layout.label(text=f"Keys ready ({ready})", icon="CHECKMARK")
+        else:
+            layout.operator("steinway.prepare", icon="MOD_BUILD")
 
         box = layout.box()
         if midi.backend_available():
@@ -35,7 +39,8 @@ class STEINWAY_PT_panel(bpy.types.Panel):
 
         col = layout.column(align=True)
         col.prop(props, "press_angle")
-        col.prop(props, "smoothing")
+        col.prop(props, "snappiness")
+        col.prop(props, "velocity_sensitivity")
 
 
 def register():

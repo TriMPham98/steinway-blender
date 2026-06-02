@@ -2,24 +2,41 @@
 
 import os
 import sys
+import time
 import subprocess
 
 import bpy
 
-from .build import keyboard, case
+from .build import retarget
 from . import midi, anim
 
+_TIMER_INTERVAL = 0.01   # modal timer period (s); also the first-frame dt seed
 
-class STEINWAY_OT_build(bpy.types.Operator):
-    bl_idname = "steinway.build"
-    bl_label = "Build Piano"
-    bl_description = "Generate the procedural Steinway Model D (keyboard + case)"
+
+class STEINWAY_OT_prepare(bpy.types.Operator):
+    bl_idname = "steinway.prepare"
+    bl_label = "Prepare Imported Keys"
+    bl_description = (
+        "Split the imported model's joined White/Black key meshes into 88 "
+        "MIDI-mapped key objects and tag the sustain pedal"
+    )
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
-        keyboard.build()
-        case.build()
-        self.report({"INFO"}, "Built Steinway Model D (88 keys)")
+        try:
+            summary = retarget.prepare()
+        except Exception as exc:  # noqa: BLE001 - surface a clear message in the UI
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        if summary.get("status") == "already-prepared":
+            self.report({"INFO"}, "Keys already prepared")
+        else:
+            self.report(
+                {"INFO"},
+                f"Prepared {summary['white']}+{summary['black']} keys "
+                f"(MIDI {summary['low']}..{summary['high']}); "
+                f"pedal: {summary['pedal'] or 'not found'}",
+            )
         return {"FINISHED"}
 
 
@@ -58,6 +75,7 @@ class STEINWAY_OT_live(bpy.types.Operator):
     _timer = None
     _port = None
     _state = None
+    _last_t = None
 
     @classmethod
     def poll(cls, context):
@@ -72,9 +90,16 @@ class STEINWAY_OT_live(bpy.types.Operator):
         if not port_name or port_name == "__none__":
             self.report({"ERROR"}, "No MIDI input - plug in your piano and reopen the Port menu")
             return {"CANCELLED"}
-        self._state = anim.LiveState(note_map=anim.build_note_map())
+        self._state = anim.LiveState(
+            note_map=anim.build_note_map(),
+            pedal_obj=anim.find_pedal(),
+            feel=anim.feel_from_props(props),
+        )
         if not self._state.note_map:
-            self.report({"ERROR"}, "No piano in the scene - click Build Piano first")
+            self.report(
+                {"ERROR"},
+                "No tagged keys - open the Steinway model and click Prepare Imported Keys",
+            )
             return {"CANCELLED"}
         try:
             self._port = midi.open_input(port_name)
@@ -83,7 +108,8 @@ class STEINWAY_OT_live(bpy.types.Operator):
             return {"CANCELLED"}
 
         wm = context.window_manager
-        self._timer = wm.event_timer_add(0.01, window=context.window)
+        self._timer = wm.event_timer_add(_TIMER_INTERVAL, window=context.window)
+        self._last_t = time.perf_counter()
         wm.modal_handler_add(self)
         props.running = True
         self.report({"INFO"}, f"Live: {port_name}")
@@ -94,13 +120,17 @@ class STEINWAY_OT_live(bpy.types.Operator):
         if not props.running or event.type == "ESC":
             return self._finish(context)
         if event.type == "TIMER":
+            now = time.perf_counter()
+            dt = (now - self._last_t) if self._last_t is not None else _TIMER_INTERVAL
+            self._last_t = now
             try:
+                self._state.feel = anim.feel_from_props(props)
                 for ev in midi.drain(self._port):
                     if ev[0] == "note":
                         anim.set_note(self._state, ev[1], ev[2])
                     elif ev[0] == "sustain":
                         anim.set_sustain(self._state, ev[1])
-                anim.ease_step(self._state, props.press_angle, props.smoothing)
+                anim.ease_step(self._state, props.press_angle, dt)
             except Exception as exc:  # noqa: BLE001
                 self.report({"ERROR"}, f"MIDI error: {exc}")
                 return self._finish(context)
@@ -115,6 +145,7 @@ class STEINWAY_OT_live(bpy.types.Operator):
         if self._timer is not None:
             wm.event_timer_remove(self._timer)
             self._timer = None
+        self._last_t = None
         if self._port is not None:
             try:
                 self._port.close()
@@ -152,7 +183,7 @@ def _redraw(context):
 
 
 _CLASSES = (
-    STEINWAY_OT_build,
+    STEINWAY_OT_prepare,
     STEINWAY_OT_install_backend,
     STEINWAY_OT_live,
     STEINWAY_OT_stop,
