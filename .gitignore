@@ -9,6 +9,12 @@ __pycache__/
 # Generated assets (regenerate via scripts/generate_piano.py --save)
 /assets/*.blend
 
+# Web viewer (npm install in web/; model via scripts/export_glb.py)
+/web/node_modules/
+/web/dist/
+/web/public/models/*.glb
+/release/
+
 # Built extension zip (regenerate via: blender --command extension build ...)
 /extension/*.zip
 

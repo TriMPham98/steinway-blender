@@ -1,0 +1,452 @@
+{
+  "keys": [
+    {
+      "note": 21,
+      "name": "Key.021",
+      "color": "white"
+    },
+    {
+      "note": 22,
+      "name": "Key.022",
+      "color": "black"
+    },
+    {
+      "note": 23,
+      "name": "Key.023",
+      "color": "white"
+    },
+    {
+      "note": 24,
+      "name": "Key.024",
+      "color": "white"
+    },
+    {
+      "note": 25,
+      "name": "Key.025",
+      "color": "black"
+    },
+    {
+      "note": 26,
+      "name": "Key.026",
+      "color": "white"
+    },
+    {
+      "note": 27,
+      "name": "Key.027",
+      "color": "black"
+    },
+    {
+      "note": 28,
+      "name": "Key.028",
+      "color": "white"
+    },
+    {
+      "note": 29,
+      "name": "Key.029",
+      "color": "white"
+    },
+    {
+      "note": 30,
+      "name": "Key.030",
+      "color": "black"
+    },
+    {
+      "note": 31,
+      "name": "Key.031",
+      "color": "white"
+    },
+    {
+      "note": 32,
+      "name": "Key.032",
+      "color": "black"
+    },
+    {
+      "note": 33,
+      "name": "Key.033",
+      "color": "white"
+    },
+    {
+      "note": 34,
+      "name": "Key.034",
+      "color": "black"
+    },
+    {
+      "note": 35,
+      "name": "Key.035",
+      "color": "white"
+    },
+    {
+      "note": 36,
+      "name": "Key.036",
+      "color": "white"
+    },
+    {
+      "note": 37,
+      "name": "Key.037",
+      "color": "black"
+    },
+    {
+      "note": 38,
+      "name": "Key.038",
+      "color": "white"
+    },
+    {
+      "note": 39,
+      "name": "Key.039",
+      "color": "black"
+    },
+    {
+      "note": 40,
+      "name": "Key.040",
+      "color": "white"
+    },
+    {
+      "note": 41,
+      "name": "Key.041",
+      "color": "white"
+    },
+    {
+      "note": 42,
+      "name": "Key.042",
+      "color": "black"
+    },
+    {
+      "note": 43,
+      "name": "Key.043",
+      "color": "white"
+    },
+    {
+      "note": 44,
+      "name": "Key.044",
+      "color": "black"
+    },
+    {
+      "note": 45,
+      "name": "Key.045",
+      "color": "white"
+    },
+    {
+      "note": 46,
+      "name": "Key.046",
+      "color": "black"
+    },
+    {
+      "note": 47,
+      "name": "Key.047",
+      "color": "white"
+    },
+    {
+      "note": 48,
+      "name": "Key.048",
+      "color": "white"
+    },
+    {
+      "note": 49,
+      "name": "Key.049",
+      "color": "black"
+    },
+    {
+      "note": 50,
+      "name": "Key.050",
+      "color": "white"
+    },
+    {
+      "note": 51,
+      "name": "Key.051",
+      "color": "black"
+    },
+    {
+      "note": 52,
+      "name": "Key.052",
+      "color": "white"
+    },
+    {
+      "note": 53,
+      "name": "Key.053",
+      "color": "white"
+    },
+    {
+      "note": 54,
+      "name": "Key.054",
+      "color": "black"
+    },
+    {
+      "note": 55,
+      "name": "Key.055",
+      "color": "white"
+    },
+    {
+      "note": 56,
+      "name": "Key.056",
+      "color": "black"
+    },
+    {
+      "note": 57,
+      "name": "Key.057",
+      "color": "white"
+    },
+    {
+      "note": 58,
+      "name": "Key.058",
+      "color": "black"
+    },
+    {
+      "note": 59,
+      "name": "Key.059",
+      "color": "white"
+    },
+    {
+      "note": 60,
+      "name": "Key.060",
+      "color": "white"
+    },
+    {
+      "note": 61,
+      "name": "Key.061",
+      "color": "black"
+    },
+    {
+      "note": 62,
+      "name": "Key.062",
+      "color": "white"
+    },
+    {
+      "note": 63,
+      "name": "Key.063",
+      "color": "black"
+    },
+    {
+      "note": 64,
+      "name": "Key.064",
+      "color": "white"
+    },
+    {
+      "note": 65,
+      "name": "Key.065",
+      "color": "white"
+    },
+    {
+      "note": 66,
+      "name": "Key.066",
+      "color": "black"
+    },
+    {
+      "note": 67,
+      "name": "Key.067",
+      "color": "white"
+    },
+    {
+      "note": 68,
+      "name": "Key.068",
+      "color": "black"
+    },
+    {
+      "note": 69,
+      "name": "Key.069",
+      "color": "white"
+    },
+    {
+      "note": 70,
+      "name": "Key.070",
+      "color": "black"
+    },
+    {
+      "note": 71,
+      "name": "Key.071",
+      "color": "white"
+    },
+    {
+      "note": 72,
+      "name": "Key.072",
+      "color": "white"
+    },
+    {
+      "note": 73,
+      "name": "Key.073",
+      "color": "black"
+    },
+    {
+      "note": 74,
+      "name": "Key.074",
+      "color": "white"
+    },
+    {
+      "note": 75,
+      "name": "Key.075",
+      "color": "black"
+    },
+    {
+      "note": 76,
+      "name": "Key.076",
+      "color": "white"
+    },
+    {
+      "note": 77,
+      "name": "Key.077",
+      "color": "white"
+    },
+    {
+      "note": 78,
+      "name": "Key.078",
+      "color": "black"
+    },
+    {
+      "note": 79,
+      "name": "Key.079",
+      "color": "white"
+    },
+    {
+      "note": 80,
+      "name": "Key.080",
+      "color": "black"
+    },
+    {
+      "note": 81,
+      "name": "Key.081",
+      "color": "white"
+    },
+    {
+      "note": 82,
+      "name": "Key.082",
+      "color": "black"
+    },
+    {
+      "note": 83,
+      "name": "Key.083",
+      "color": "white"
+    },
+    {
+      "note": 84,
+      "name": "Key.084",
+      "color": "white"
+    },
+    {
+      "note": 85,
+      "name": "Key.085",
+      "color": "black"
+    },
+    {
+      "note": 86,
+      "name": "Key.086",
+      "color": "white"
+    },
+    {
+      "note": 87,
+      "name": "Key.087",
+      "color": "black"
+    },
+    {
+      "note": 88,
+      "name": "Key.088",
+      "color": "white"
+    },
+    {
+      "note": 89,
+      "name": "Key.089",
+      "color": "white"
+    },
+    {
+      "note": 90,
+      "name": "Key.090",
+      "color": "black"
+    },
+    {
+      "note": 91,
+      "name": "Key.091",
+      "color": "white"
+    },
+    {
+      "note": 92,
+      "name": "Key.092",
+      "color": "black"
+    },
+    {
+      "note": 93,
+      "name": "Key.093",
+      "color": "white"
+    },
+    {
+      "note": 94,
+      "name": "Key.094",
+      "color": "black"
+    },
+    {
+      "note": 95,
+      "name": "Key.095",
+      "color": "white"
+    },
+    {
+      "note": 96,
+      "name": "Key.096",
+      "color": "white"
+    },
+    {
+      "note": 97,
+      "name": "Key.097",
+      "color": "black"
+    },
+    {
+      "note": 98,
+      "name": "Key.098",
+      "color": "white"
+    },
+    {
+      "note": 99,
+      "name": "Key.099",
+      "color": "black"
+    },
+    {
+      "note": 100,
+      "name": "Key.100",
+      "color": "white"
+    },
+    {
+      "note": 101,
+      "name": "Key.101",
+      "color": "white"
+    },
+    {
+      "note": 102,
+      "name": "Key.102",
+      "color": "black"
+    },
+    {
+      "note": 103,
+      "name": "Key.103",
+      "color": "white"
+    },
+    {
+      "note": 104,
+      "name": "Key.104",
+      "color": "black"
+    },
+    {
+      "note": 105,
+      "name": "Key.105",
+      "color": "white"
+    },
+    {
+      "note": 106,
+      "name": "Key.106",
+      "color": "black"
+    },
+    {
+      "note": 107,
+      "name": "Key.107",
+      "color": "white"
+    },
+    {
+      "note": 108,
+      "name": "Key.108",
+      "color": "white"
+    }
+  ],
+  "pedal": "Right Sustain Pedal",
+  "press_angle_deg": 3.5,
+  "defaults": {
+    "press_angle_deg": 3.5,
+    "snappiness": 1.0,
+    "velocity_sensitivity": 1.0,
+    "pedal_angle_deg": 5.0
+  }
+}

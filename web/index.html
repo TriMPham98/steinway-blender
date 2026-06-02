@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Steinway MIDI Piano</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <div id="app">
+      <header class="bar">
+        <h1>Steinway MIDI Piano</h1>
+        <p class="tagline">Live grand piano — same motion model as the Blender add-on</p>
+      </header>
+      <div id="viewport"></div>
+      <aside class="panel" aria-label="Steinway MIDI controls">
+        <p id="status" class="status">Loading…</p>
+        <p id="keys-ready" class="badge">Keys</p>
+        <p id="midi-backend" class="badge">MIDI</p>
+
+        <label class="field">
+          <span>MIDI port</span>
+          <select id="midi-port" disabled>
+            <option value="">Loading ports…</option>
+          </select>
+        </label>
+
+        <div class="transport">
+          <button type="button" id="btn-start" class="primary" disabled>Start</button>
+          <button type="button" id="btn-stop" disabled>Stop</button>
+        </div>
+
+        <div class="sliders">
+          <label class="field slider">
+            <span>Press angle <output id="press-angle-val">3.5°</output></span>
+            <input
+              type="range"
+              id="press-angle"
+              min="0"
+              max="12"
+              step="0.1"
+              value="3.5"
+            />
+          </label>
+          <label class="field slider">
+            <span>Snappiness <output id="snappiness-val">1.0</output></span>
+            <input
+              type="range"
+              id="snappiness"
+              min="0.3"
+              max="3"
+              step="0.05"
+              value="1"
+            />
+          </label>
+          <label class="field slider">
+            <span>Velocity sensitivity <output id="velocity-sens-val">1.0</output></span>
+            <input
+              type="range"
+              id="velocity-sens"
+              min="0"
+              max="2"
+              step="0.05"
+              value="1"
+            />
+          </label>
+        </div>
+
+        <p class="hint">
+          <strong>Start</strong> opens live MIDI (notes 21–108, CC64 sustain pedal).
+          Keys follow your fingers only — pedal tilts visually, no damper hold yet.
+          Click keys when stopped to preview. Drag to orbit · scroll to zoom · Esc stops.
+        </p>
+      </aside>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
