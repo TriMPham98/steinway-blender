@@ -109,30 +109,15 @@ function lacquerFromExport(mat, { matte, lite }) {
   });
 }
 
-/** Bench seat top — soft dapple albedo, no normal map (avoids faux quilt/spike). */
+/** Bench seat — matte padded vinyl (export uses a flat solid box for the cushion). */
 function dappleCushion(mat) {
-  if (!mat.map) {
-    return new THREE.MeshStandardMaterial({
-      name: mat.name,
-      color: 0x4a4744,
-      roughness: 0.72,
-      metalness: 0,
-      envMapIntensity: 0.1,
-    });
-  }
-  const map = mat.map.clone();
-  map.wrapS = map.wrapT = THREE.RepeatWrapping;
-  map.repeat.set(2, 2);
-  const next = new THREE.MeshStandardMaterial({
+  return new THREE.MeshStandardMaterial({
     name: mat.name,
-    map,
-    color: 0xffffff,
-    roughness: 0.72,
+    color: 0x4a4846,
+    roughness: 0.78,
     metalness: 0,
-    envMapIntensity: 0.1,
+    envMapIntensity: 0.08,
   });
-  prepMaps(next);
-  return next;
 }
 
 function tuneMetal(mat, fallbackColor, fallbackRough) {

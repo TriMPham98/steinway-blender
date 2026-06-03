@@ -8,8 +8,9 @@
 Pipeline (source of truth: ``assets/steinway_grand_playable.blend``):
 
 1. Strip scene props (Floor, oversized meshes).
-2. **Bench** — keep real geometry; apply object scale; assign materials; join as
-   ``Piano_Bench`` (never replace with a proxy cube — that breaks origins).
+2. **Bench** — apply object scale; replace only the cushion with a bound-box solid
+   (source mesh is wavy in local space); keep frame geometry; join as
+   ``Piano_Bench``.
 3. **Body** — join remaining static meshes into ``Piano_Static``.
 4. Flatten materials to fast Principled trees; export GLB. Web viewer refines by
    material name (``web/src/scene-utils.js``).
@@ -71,51 +72,53 @@ def _apply_mesh_transforms(obj):
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
 
 
-def _fix_bench_cushion_materials():
-    """Dapple only on the top face; sides get sy_dark_shiny like the frame.
+def _solidify_bench_cushion(obj):
+    """Swap wavy high-res cushion mesh for a solid box in its bound_box (after scale apply).
 
-    Flattened glTF UVs on vertical faces turn the dapple tile into piano-key
-    stripes in Three.js. Blender hides this via cw-scale node groups.
+    Source cushion carries ~2 m of folded geometry in local Z; baking non-uniform
+    scale leaves 5–7 cm ripples that read as spikes in glTF. The box is fit to
+    ``bound_box`` so the object origin stays put (contrast with a center-origin cube).
     """
     import bpy
     import bmesh
+    from mathutils import Vector
 
-    obj = bpy.data.objects.get("Seat Cushion")
+    dapple = bpy.data.materials.get("CW-Plastic-Dapple")
     dark = bpy.data.materials.get("sy_dark_shiny")
-    if obj is None or obj.type != "MESH" or dark is None:
+    if dapple is None or dark is None:
         return False
 
-    mesh = obj.data
-    dapple_idx = None
-    for i, slot in enumerate(obj.material_slots):
-        if slot.material and "dapple" in slot.material.name.lower():
-            dapple_idx = i
-            break
-    if dapple_idx is None:
+    corners = [Vector(c) for c in obj.bound_box]
+    mn = Vector([min(c[i] for c in corners) for i in range(3)])
+    mx = Vector([max(c[i] for c in corners) for i in range(3)])
+    dims = mx - mn
+    if min(dims) < 0.01:
         return False
 
-    if dark.name not in [s.material.name for s in obj.material_slots if s.material]:
-        mesh.materials.append(dark)
-    dark_idx = next(
-        i for i, s in enumerate(obj.material_slots) if s.material and s.material == dark
-    )
-
+    new_mesh = bpy.data.meshes.new("SeatCushionSolid")
     bm = bmesh.new()
-    bm.from_mesh(mesh)
+    bmesh.ops.create_cube(bm, size=1.0)
+    for vert in bm.verts:
+        vert.co.x = mn.x + (vert.co.x + 0.5) * dims.x
+        vert.co.y = mn.y + (vert.co.y + 0.5) * dims.y
+        vert.co.z = mn.z + (vert.co.z + 0.5) * dims.z
     bm.faces.ensure_lookup_table()
-    top = 0
-    side = 0
+    new_mesh.materials.append(dapple)
+    new_mesh.materials.append(dark)
     for face in bm.faces:
-        if face.normal.z > 0.85:
-            face.material_index = dapple_idx
-            top += 1
-        else:
-            face.material_index = dark_idx
-            side += 1
-    bm.to_mesh(mesh)
+        face.material_index = 0 if face.normal.z > 0.9 else 1
+    bm.to_mesh(new_mesh)
     bm.free()
-    mesh.update()
-    print(f"[export] bench cushion: {top} top (dapple), {side} side (lacquer) faces")
+    for poly in new_mesh.polygons:
+        poly.use_smooth = True
+
+    old = obj.data
+    obj.data = new_mesh
+    if old.users == 0:
+        bpy.data.meshes.remove(old)
+    print(
+        f"[export] bench cushion: solid box {dims.x:.2f}x{dims.y:.2f}x{dims.z:.2f} m"
+    )
     return True
 
 
@@ -135,15 +138,15 @@ def _prepare_bench_export():
         for mod in list(obj.modifiers):
             obj.modifiers.remove(mod)
         _apply_mesh_transforms(obj)
-        if hasattr(obj.data, "shade_smooth"):
+        if name == "Seat Cushion":
+            _solidify_bench_cushion(obj)
+        elif hasattr(obj.data, "shade_smooth"):
             obj.data.shade_smooth()
         parts.append(obj)
 
     if not parts:
         print("[export] bench: no Seat Cushion / Seat Frame found")
         return False
-
-    _fix_bench_cushion_materials()
 
     if len(parts) == 1:
         parts[0].name = "Piano_Bench"
