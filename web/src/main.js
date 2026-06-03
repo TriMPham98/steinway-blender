@@ -4,12 +4,15 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { PianoController } from "./piano.js";
 import { LiveSession } from "./live.js";
 import { backendAvailable, findDefaultPort, listInputPorts } from "./midi.js";
+import { createSceneDebugPanel } from "./scene-debug.js";
 import {
   CAMERA_PRESETS,
   createStudioGround,
   fitCameraToModel,
   frameModel,
+  getHeroCameraPose,
   refineMaterials,
+  HERO_CAMERA_DEFAULTS,
   setupEnvironment,
   setupShadows,
   setupSeatedViewerLights,
@@ -23,14 +26,15 @@ const MANIFEST_URL = "/models/steinway.keys.json";
 
 const ui = {
   status: document.getElementById("status"),
-  keysReady: document.getElementById("keys-ready"),
-  midiBackend: document.getElementById("midi-backend"),
   port: document.getElementById("midi-port"),
   btnStart: document.getElementById("btn-start"),
   btnStop: document.getElementById("btn-stop"),
-  viewSeated: document.getElementById("view-seated"),
+  viewHero: document.getElementById("view-hero"),
   viewFront: document.getElementById("view-front"),
   viewTop: document.getElementById("view-top"),
+  menuToggle: document.getElementById("menu-toggle"),
+  drawer: document.getElementById("drawer"),
+  drawerClose: document.getElementById("drawer-close"),
 };
 const viewport = document.getElementById("viewport");
 
@@ -64,8 +68,13 @@ controls.minDistance = 1.0;
 controls.maxDistance = 12;
 controls.maxPolarAngle = Math.PI * 0.49;
 
-const { syncViewerLight } = setupSeatedViewerLights(scene);
+const { lights, syncViewerLight } = setupSeatedViewerLights(scene);
 createStudioGround(scene);
+
+let modelRoot = null;
+let heroCameraDefaults = null;
+/** @type {ReturnType<typeof createSceneDebugPanel> | null} */
+let sceneDebug = null;
 
 const loader = new GLTFLoader();
 const raycaster = new THREE.Raycaster();
@@ -123,11 +132,40 @@ function updateCameraTween(dt) {
   if (t >= 1) {
     cameraTween.active = false;
     controls.enabled = true;
+    sceneDebug?.syncSlidersFromScene();
   }
 }
 
+let statusTimer = 0;
+/** Transient toast — shows briefly then fades. Empty message hides it. */
 function setStatus(msg) {
-  ui.status.textContent = msg;
+  clearTimeout(statusTimer);
+  ui.status.textContent = msg ?? "";
+  if (!msg) {
+    ui.status.classList.remove("show");
+    return;
+  }
+  ui.status.classList.add("show");
+  statusTimer = setTimeout(() => ui.status.classList.remove("show"), 3500);
+}
+
+function openDrawer() {
+  ui.drawer.classList.add("open");
+  ui.drawer.setAttribute("aria-hidden", "false");
+  ui.menuToggle.setAttribute("aria-expanded", "true");
+  ui.menuToggle.classList.add("hidden");
+}
+
+function closeDrawer() {
+  ui.drawer.classList.remove("open");
+  ui.drawer.setAttribute("aria-hidden", "true");
+  ui.menuToggle.setAttribute("aria-expanded", "false");
+  ui.menuToggle.classList.remove("hidden");
+}
+
+function toggleDrawer() {
+  if (ui.drawer.classList.contains("open")) closeDrawer();
+  else openDrawer();
 }
 
 function setTransportRunning(running) {
@@ -165,15 +203,12 @@ function fillPortList(names, selected) {
 
 async function setupMidi() {
   if (!backendAvailable()) {
-    ui.midiBackend.textContent = "Web MIDI not supported in this browser";
-    ui.midiBackend.classList.add("warn");
+    setStatus("Web MIDI not supported in this browser");
     ui.btnStart.disabled = true;
     return;
   }
   try {
     midiAccess = await navigator.requestMIDIAccess({ sysex: false });
-    ui.midiBackend.textContent = "Web MIDI ready";
-    ui.midiBackend.classList.remove("warn");
     const refresh = () => {
       const names = listInputPorts(midiAccess);
       fillPortList(names, ui.port.value);
@@ -182,8 +217,7 @@ async function setupMidi() {
     refresh();
     midiAccess.onstatechange = refresh;
   } catch {
-    ui.midiBackend.textContent = "Web MIDI permission denied";
-    ui.midiBackend.classList.add("warn");
+    setStatus("Web MIDI permission denied");
     ui.btnStart.disabled = true;
   }
 }
@@ -240,6 +274,7 @@ async function init() {
   ]);
 
   const model = gltf.scene;
+  modelRoot = model;
   stripEmbeddedGround(model);
   stripBench(model);
   stripBenchLegs(model);
@@ -250,6 +285,39 @@ async function init() {
   const pose = fitCameraToModel(camera, controls, model);
   renderer.toneMappingExposure = pose.exposure;
   syncViewerLight(pose.viewerLightPosition);
+
+  heroCameraDefaults = {
+    position: pose.position.clone(),
+    target: pose.target.clone(),
+    fov: pose.fov,
+    exposure: pose.exposure,
+  };
+
+  sceneDebug = createSceneDebugPanel({
+    camera,
+    controls,
+    renderer,
+    lights,
+    mount: viewport,
+    getCameraDefaults: () => {
+      if (modelRoot) {
+        const p = getHeroCameraPose(modelRoot);
+        return {
+          position: p.position,
+          target: p.target,
+          fov: p.fov,
+          exposure: p.exposure,
+        };
+      }
+      if (heroCameraDefaults) return heroCameraDefaults;
+      return {
+        position: new THREE.Vector3(...HERO_CAMERA_DEFAULTS.position),
+        target: new THREE.Vector3(...HERO_CAMERA_DEFAULTS.target),
+        fov: HERO_CAMERA_DEFAULTS.fov,
+        exposure: HERO_CAMERA_DEFAULTS.exposure,
+      };
+    },
+  });
 
   const defaults = manifest.defaults ?? {};
   feelSettings = {
@@ -262,13 +330,6 @@ async function init() {
   piano.applySettings(feelSettings);
 
   const ready = piano.keyCount;
-  if (ready >= 88) {
-    ui.keysReady.textContent = `Keys ready (${ready})`;
-    ui.keysReady.classList.add("ok");
-  } else {
-    ui.keysReady.textContent = `Keys missing (${ready}/88) — re-export model`;
-    ui.keysReady.classList.add("warn");
-  }
 
   live = new LiveSession(piano, {
     onStatus: setStatus,
@@ -276,13 +337,17 @@ async function init() {
     getSettings: () => feelSettings,
   });
 
-  setStatus(`Ready — ${ready} keys · click keys or press Start for MIDI`);
+  if (ready >= 88) {
+    setStatus(`Ready · ${ready} keys`);
+  } else {
+    setStatus(`Keys missing (${ready}/88) — re-export model`);
+  }
   await setupMidi();
 
   ui.btnStart.addEventListener("click", onStart);
   ui.btnStop.addEventListener("click", onStop);
-  ui.viewSeated.addEventListener("click", () =>
-    animateCameraTo(CAMERA_PRESETS.seated, 1.0),
+  ui.viewHero.addEventListener("click", () =>
+    animateCameraTo(CAMERA_PRESETS.hero, 1.0),
   );
   ui.viewFront.addEventListener("click", () =>
     animateCameraTo(CAMERA_PRESETS.front, 1.0),
@@ -291,16 +356,21 @@ async function init() {
     animateCameraTo(CAMERA_PRESETS.top, 1.0),
   );
 
+  ui.menuToggle.addEventListener("click", toggleDrawer);
+  ui.drawerClose.addEventListener("click", closeDrawer);
+
   window.addEventListener("keydown", (e) => {
-    if (e.key === "Escape" && live?.isRunning) onStop();
+    if (e.key !== "Escape") return;
+    if (ui.drawer.classList.contains("open")) closeDrawer();
+    else if (live?.isRunning) onStop();
   });
 
-  // Cinematic intro: reveal from a wide pose, then settle into the seated view.
-  const start = new THREE.Vector3(...CAMERA_PRESETS.seated.position)
+  // Cinematic intro: reveal from a wide pose, then settle into the hero view.
+  const start = new THREE.Vector3(...CAMERA_PRESETS.hero.position)
     .multiplyScalar(1.8)
-    .setY(CAMERA_PRESETS.seated.position[1] + 1.2);
+    .setY(CAMERA_PRESETS.hero.position[1] + 1.2);
   camera.position.copy(start);
-  animateCameraTo(CAMERA_PRESETS.seated, 2.2);
+  animateCameraTo(CAMERA_PRESETS.hero, 2.2);
 }
 
 renderer.domElement.addEventListener("pointerdown", pointerDown);

@@ -34,20 +34,34 @@ export function frameModel(root) {
   };
 }
 
-/** Default seated view (tuned in camera debug). */
-export const SEATED_CAMERA_DEFAULTS = {
+/** Default hero (¾ product) view — tuned in scene debug. */
+export const HERO_CAMERA_DEFAULTS = {
   position: [2.53, 1.35, 2.21],
   target: [0.14, 0.71, 0.19],
   fov: 44,
   exposure: 1.86,
 };
 
+/** Default scene lighting (tuned in scene debug). */
+export const LIGHTING_DEFAULTS = {
+  ambientIntensity: 0.72,
+  hemiIntensity: 1.05,
+  ceilingIntensity: 1.15,
+  ceilingPosition: [0, 5, 0.5],
+  roomIntensity: 0.65,
+  roomPosition: [-3, 2.5, 2],
+  viewerIntensity: 6.5,
+  viewerDistance: 14,
+  viewerDecay: 1.8,
+  keySpotIntensity: 2.8,
+};
+
 /** Snap-to preset views for the viewer. Tune positions by eye if framing drifts. */
 export const CAMERA_PRESETS = {
-  seated: {
-    position: [...SEATED_CAMERA_DEFAULTS.position],
-    target: [...SEATED_CAMERA_DEFAULTS.target],
-    fov: SEATED_CAMERA_DEFAULTS.fov,
+  hero: {
+    position: [...HERO_CAMERA_DEFAULTS.position],
+    target: [...HERO_CAMERA_DEFAULTS.target],
+    fov: HERO_CAMERA_DEFAULTS.fov,
   },
   front: {
     position: [0, 1.05, 2.6],
@@ -61,28 +75,28 @@ export const CAMERA_PRESETS = {
   },
 };
 
-/** Seated-player POV — fixed pose after frameModel centers the piano. */
-export function getSeatedCameraPose(root) {
+/** Hero (¾ product) view — fixed pose after frameModel centers the piano. */
+export function getHeroCameraPose(root) {
   root.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(root);
   const radius = Math.max(box.getSize(new THREE.Vector3()).length() * 0.5, 0.6);
 
-  const position = new THREE.Vector3(...SEATED_CAMERA_DEFAULTS.position);
-  const target = new THREE.Vector3(...SEATED_CAMERA_DEFAULTS.target);
+  const position = new THREE.Vector3(...HERO_CAMERA_DEFAULTS.position);
+  const target = new THREE.Vector3(...HERO_CAMERA_DEFAULTS.target);
 
   return {
     position,
     target,
-    fov: SEATED_CAMERA_DEFAULTS.fov,
-    exposure: SEATED_CAMERA_DEFAULTS.exposure,
+    fov: HERO_CAMERA_DEFAULTS.fov,
+    exposure: HERO_CAMERA_DEFAULTS.exposure,
     radius,
     viewerLightPosition: position.clone().add(new THREE.Vector3(0, 0.06, 0.12)),
   };
 }
 
-/** Aim camera as if seated at the keyboard, looking at the fallboard. */
+/** Aim camera at the default hero framing. */
 export function fitCameraToModel(camera, controls, root) {
-  const pose = getSeatedCameraPose(root);
+  const pose = getHeroCameraPose(root);
   controls.target.copy(pose.target);
   camera.position.copy(pose.position);
   camera.fov = pose.fov;
@@ -347,21 +361,28 @@ export function setupEnvironment(renderer, scene) {
  * @returns {{ viewerLight: THREE.PointLight, syncViewerLight: (pos: THREE.Vector3) => void }}
  */
 export function setupSeatedViewerLights(scene) {
-  const ambient = new THREE.AmbientLight(0xf2f4fa, 0.72);
+  const d = LIGHTING_DEFAULTS;
+
+  const ambient = new THREE.AmbientLight(0xf2f4fa, d.ambientIntensity);
   scene.add(ambient);
 
-  const hemi = new THREE.HemisphereLight(0xf8fafc, 0x9098a8, 1.05);
+  const hemi = new THREE.HemisphereLight(0xf8fafc, 0x9098a8, d.hemiIntensity);
   scene.add(hemi);
 
-  const ceiling = new THREE.DirectionalLight(0xfffaf5, 1.15);
-  ceiling.position.set(0, 5, 0.5);
+  const ceiling = new THREE.DirectionalLight(0xfffaf5, d.ceilingIntensity);
+  ceiling.position.set(...d.ceilingPosition);
   scene.add(ceiling);
 
-  const room = new THREE.DirectionalLight(0xe8ecf8, 0.65);
-  room.position.set(-3, 2.5, 2);
+  const room = new THREE.DirectionalLight(0xe8ecf8, d.roomIntensity);
+  room.position.set(...d.roomPosition);
   scene.add(room);
 
-  const viewerLight = new THREE.PointLight(0xfff6ea, 6.5, 14, 1.8);
+  const viewerLight = new THREE.PointLight(
+    0xfff6ea,
+    d.viewerIntensity,
+    d.viewerDistance,
+    d.viewerDecay,
+  );
   viewerLight.position.set(0, 1.05, 1.65);
   viewerLight.castShadow = true;
   viewerLight.shadow.mapSize.set(1024, 1024);
@@ -369,7 +390,7 @@ export function setupSeatedViewerLights(scene) {
   viewerLight.shadow.normalBias = 0.012;
   scene.add(viewerLight);
 
-  const keySpot = new THREE.SpotLight(0xffffff, 2.8, 10, Math.PI / 5, 0.12, 1.2);
+  const keySpot = new THREE.SpotLight(0xffffff, d.keySpotIntensity, 10, Math.PI / 5, 0.12, 1.2);
   keySpot.position.set(0, 2.2, 1.1);
   const keyTarget = new THREE.Object3D();
   keyTarget.position.set(0, 0.95, 0);
@@ -387,7 +408,10 @@ export function setupSeatedViewerLights(scene) {
     );
   };
 
-  return { viewerLight, syncViewerLight };
+  return {
+    lights: { ambient, hemi, ceiling, room, viewerLight, keySpot },
+    syncViewerLight,
+  };
 }
 
 /** Subtly reflective studio floor (env-lit sheen — no extra render pass). */
