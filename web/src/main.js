@@ -32,6 +32,7 @@ const ui = {
   viewHero: document.getElementById("view-hero"),
   viewFront: document.getElementById("view-front"),
   viewTop: document.getElementById("view-top"),
+  viewSeated: document.getElementById("view-seated"),
   menuToggle: document.getElementById("menu-toggle"),
   drawer: document.getElementById("drawer"),
   drawerClose: document.getElementById("drawer-close"),
@@ -113,6 +114,9 @@ function animateCameraTo(pose, duration = 1) {
   cameraTween.toPos.set(...pose.position);
   cameraTween.toTarget.set(...pose.target);
   cameraTween.toFov = pose.fov;
+  if (pose.exposure != null) {
+    renderer.toneMappingExposure = pose.exposure;
+  }
   cameraTween.elapsed = 0;
   cameraTween.duration = Math.max(duration, 0.0001);
   cameraTween.active = true;
@@ -232,6 +236,7 @@ function onStart() {
   try {
     live.start(midiAccess, port);
     setTransportRunning(true);
+    animateCameraTo(CAMERA_PRESETS.seated, 1.0);
   } catch (err) {
     setStatus(String(err.message ?? err));
   }
@@ -354,6 +359,9 @@ async function init() {
   );
   ui.viewTop.addEventListener("click", () =>
     animateCameraTo(CAMERA_PRESETS.top, 1.0),
+  );
+  ui.viewSeated.addEventListener("click", () =>
+    animateCameraTo(CAMERA_PRESETS.seated, 1.0),
   );
 
   ui.menuToggle.addEventListener("click", toggleDrawer);

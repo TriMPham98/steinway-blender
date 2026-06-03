@@ -64,14 +64,21 @@ export const CAMERA_PRESETS = {
     fov: HERO_CAMERA_DEFAULTS.fov,
   },
   front: {
-    position: [0, 1.05, 2.6],
-    target: [0, 0.7, 0],
+    position: [0.02, 1.19, 3.08],
+    target: [0.01, 0.75, 0.03],
     fov: 42,
   },
   top: {
     position: [0, 3.0, 1.3],
     target: [0, 0.7, 0],
     fov: 46,
+  },
+  /** Player-at-keyboard view — used when live MIDI session starts. */
+  seated: {
+    position: [0.02, 1.58, 1.85],
+    target: [0.01, 0.75, 0.74],
+    fov: 42,
+    exposure: 1.86,
   },
 };
 
