@@ -11,11 +11,13 @@ import {
   refineMaterials,
   setupEnvironment,
   setupShadows,
-  setupStudioLights,
+  getSeatedCameraPose,
+  setupSeatedViewerLights,
   stripBench,
   stripEmbeddedGround,
   stripBenchLegs,
 } from "./scene-utils.js";
+import { createCameraDebugPanel } from "./camera-debug.js";
 
 const MODEL_URL = "/models/steinway.glb";
 const MANIFEST_URL = "/models/steinway.keys.json";
@@ -44,14 +46,14 @@ const camera = new THREE.PerspectiveCamera(
   0.05,
   50,
 );
-camera.position.set(1.2, 1.0, 2.0);
+camera.position.set(2.53, 1.35, 2.21);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.42;
+renderer.toneMappingExposure = 1.86;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 viewport.appendChild(renderer.domElement);
@@ -59,15 +61,18 @@ viewport.appendChild(renderer.domElement);
 setupEnvironment(renderer, scene);
 
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0, 0.82, 0);
+controls.target.set(0.14, 0.71, 0.19);
 controls.enableDamping = true;
 controls.dampingFactor = 0.06;
 controls.minDistance = 1.0;
 controls.maxDistance = 12;
 controls.maxPolarAngle = Math.PI * 0.49;
 
-setupStudioLights(scene);
+const { syncViewerLight } = setupSeatedViewerLights(scene);
 createStudioGround(scene);
+
+let modelRoot = null;
+let seatedCameraDefaults = null;
 
 const loader = new GLTFLoader();
 const raycaster = new THREE.Raycaster();
@@ -225,11 +230,39 @@ async function init() {
   if (benchLegsRemoved) {
     console.info(`[viewer] removed ${benchLegsRemoved} bench leg object(s)`);
   }
+  modelRoot = model;
   scene.add(model);
   frameModel(model);
   refineMaterials(model);
   setupShadows(model);
-  fitCameraToModel(camera, controls, model);
+  const pose = fitCameraToModel(camera, controls, model);
+  renderer.toneMappingExposure = pose.exposure;
+  seatedCameraDefaults = {
+    position: pose.position.clone(),
+    target: pose.target.clone(),
+    fov: pose.fov,
+    exposure: pose.exposure,
+  };
+  syncViewerLight(pose.viewerLightPosition);
+
+  createCameraDebugPanel({
+    camera,
+    controls,
+    renderer,
+    mount: viewport,
+    getDefaults: () =>
+      modelRoot
+        ? (() => {
+            const p = getSeatedCameraPose(modelRoot);
+            return {
+              position: p.position,
+              target: p.target,
+              fov: p.fov,
+              exposure: p.exposure,
+            };
+          })()
+        : seatedCameraDefaults,
+  });
 
   if (manifest.defaults) {
     ui.pressAngle.value = String(manifest.defaults.press_angle_deg ?? 3.5);
@@ -286,6 +319,7 @@ function animate() {
     piano?.step(dt);
   }
   controls.update();
+  syncViewerLight(camera.position);
   renderer.render(scene, camera);
 }
 

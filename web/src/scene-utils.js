@@ -34,27 +34,44 @@ export function frameModel(root) {
   };
 }
 
-/** Aim camera and orbit target at the piano for a front 3/4 view of keys and case. */
-export function fitCameraToModel(camera, controls, root) {
+/** Default seated view (tuned in camera debug). */
+export const SEATED_CAMERA_DEFAULTS = {
+  position: [2.53, 1.35, 2.21],
+  target: [0.14, 0.71, 0.19],
+  fov: 44,
+  exposure: 1.86,
+};
+
+/** Seated-player POV — fixed pose after frameModel centers the piano. */
+export function getSeatedCameraPose(root) {
   root.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(root);
-  const size = box.getSize(new THREE.Vector3());
-  const center = box.getCenter(new THREE.Vector3());
-  const radius = Math.max(size.length() * 0.5, 0.6);
+  const radius = Math.max(box.getSize(new THREE.Vector3()).length() * 0.5, 0.6);
 
-  const target = center.clone();
-  target.y += size.y * 0.08;
-  controls.target.copy(target);
+  const position = new THREE.Vector3(...SEATED_CAMERA_DEFAULTS.position);
+  const target = new THREE.Vector3(...SEATED_CAMERA_DEFAULTS.target);
 
-  const offset = new THREE.Vector3(0.5, 0.34, 0.94)
-    .normalize()
-    .multiplyScalar(radius * 1.55);
-  camera.position.copy(target).add(offset);
-  camera.near = Math.max(0.01, radius / 200);
-  camera.far = Math.max(50, radius * 40);
+  return {
+    position,
+    target,
+    fov: SEATED_CAMERA_DEFAULTS.fov,
+    exposure: SEATED_CAMERA_DEFAULTS.exposure,
+    radius,
+    viewerLightPosition: position.clone().add(new THREE.Vector3(0, 0.06, 0.12)),
+  };
+}
+
+/** Aim camera as if seated at the keyboard, looking at the fallboard. */
+export function fitCameraToModel(camera, controls, root) {
+  const pose = getSeatedCameraPose(root);
+  controls.target.copy(pose.target);
+  camera.position.copy(pose.position);
+  camera.fov = pose.fov;
+  camera.near = Math.max(0.01, pose.radius / 200);
+  camera.far = Math.max(50, pose.radius * 40);
   camera.updateProjectionMatrix();
   controls.update();
-  return { radius, center: target };
+  return pose;
 }
 
 /**
@@ -156,9 +173,9 @@ function lacquerFromExport(mat, { matte, lite }) {
     metalness: 0,
     clearcoat: matte ? (lite ? 0 : 0.12) : lite ? 0.28 : 0.55,
     clearcoatRoughness: matte ? 0.4 : lite ? 0.22 : 0.07,
-    envMapIntensity: lite ? 0.55 : 0.38,
-    specularIntensity: lite ? 0.55 : 0.5,
-    specularColor: new THREE.Color(lite ? 0xffffff : 0xb8bcc8),
+    envMapIntensity: lite ? 0.7 : 0.52,
+    specularIntensity: lite ? 0.65 : 0.58,
+    specularColor: new THREE.Color(lite ? 0xffffff : 0xd0d4e0),
   });
 }
 
@@ -254,24 +271,24 @@ function radialBackground(inner, outer) {
   return tex;
 }
 
-/** PMREM studio probe — bright enough for wood/metal/lacquer edge detail. */
-function studioEnvironment(pmrem) {
+/** Bright room probe for lacquer / wood reflections. */
+function roomEnvironment(pmrem) {
   const envScene = new THREE.Scene();
-  envScene.add(new THREE.AmbientLight(0x9098a8, 0.75));
-  const soft = new THREE.DirectionalLight(0xc8d0dc, 0.95);
-  soft.position.set(2, 4, 3);
-  envScene.add(soft);
-  const fill = new THREE.DirectionalLight(0x788898, 0.55);
-  fill.position.set(-3, 1, -2);
+  envScene.add(new THREE.AmbientLight(0xe8ecf4, 1.1));
+  const window = new THREE.DirectionalLight(0xfff8f0, 1.35);
+  window.position.set(1, 3, 4);
+  envScene.add(window);
+  const fill = new THREE.DirectionalLight(0xc0c8d8, 0.75);
+  fill.position.set(-2, 2, -1);
   envScene.add(fill);
-  return pmrem.fromScene(envScene, 0.08).texture;
+  return pmrem.fromScene(envScene, 0.1).texture;
 }
 
-/** Soft gradient backdrop + moderate IBL for readable surface detail. */
+/** Light room backdrop + IBL (seated viewing context). */
 export function setupEnvironment(renderer, scene) {
   const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = studioEnvironment(pmrem);
-  scene.background = radialBackground("#5a6678", "#343e4c");
+  scene.environment = roomEnvironment(pmrem);
+  scene.background = radialBackground("#b8c0cc", "#8a94a4");
   // Fog was flattening surface detail — keep backdrop gradient only.
   scene.fog = null;
   pmrem.dispose();
@@ -279,45 +296,51 @@ export function setupEnvironment(renderer, scene) {
 }
 
 /**
- * Multi-angle rig so lacquer edges and keys read in the viewport.
- * @returns {{ key: THREE.DirectionalLight }}
+ * Lighting as if you're seated at the piano: room fill + lamp from your viewpoint.
+ * @returns {{ viewerLight: THREE.PointLight, syncViewerLight: (pos: THREE.Vector3) => void }}
  */
-export function setupStudioLights(scene) {
-  const ambient = new THREE.AmbientLight(0xb8c0cc, 0.32);
+export function setupSeatedViewerLights(scene) {
+  const ambient = new THREE.AmbientLight(0xf2f4fa, 0.72);
   scene.add(ambient);
 
-  const hemi = new THREE.HemisphereLight(0xa8b4c4, 0x2a323c, 0.58);
+  const hemi = new THREE.HemisphereLight(0xf8fafc, 0x9098a8, 1.05);
   scene.add(hemi);
 
-  const key = new THREE.DirectionalLight(0xfff8f0, 2.85);
-  key.position.set(3.5, 6, 2.8);
-  key.castShadow = true;
-  key.shadow.mapSize.set(2048, 2048);
-  key.shadow.intensity = 0.38;
-  key.shadow.camera.near = 0.5;
-  key.shadow.camera.far = 18;
-  const s = 3.5;
-  key.shadow.camera.left = -s;
-  key.shadow.camera.right = s;
-  key.shadow.camera.top = s;
-  key.shadow.camera.bottom = -s;
-  key.shadow.bias = -0.0003;
-  key.shadow.normalBias = 0.015;
-  scene.add(key);
+  const ceiling = new THREE.DirectionalLight(0xfffaf5, 1.15);
+  ceiling.position.set(0, 5, 0.5);
+  scene.add(ceiling);
 
-  const fill = new THREE.DirectionalLight(0xe8e4dc, 0.95);
-  fill.position.set(-2.5, 3.5, 4.5);
-  scene.add(fill);
+  const room = new THREE.DirectionalLight(0xe8ecf8, 0.65);
+  room.position.set(-3, 2.5, 2);
+  scene.add(room);
 
-  const rim = new THREE.DirectionalLight(0xa8c0e0, 0.62);
-  rim.position.set(-5, 4, -3);
-  scene.add(rim);
+  const viewerLight = new THREE.PointLight(0xfff6ea, 6.5, 14, 1.8);
+  viewerLight.position.set(0, 1.05, 1.65);
+  viewerLight.castShadow = true;
+  viewerLight.shadow.mapSize.set(1024, 1024);
+  viewerLight.shadow.bias = -0.0002;
+  viewerLight.shadow.normalBias = 0.012;
+  scene.add(viewerLight);
 
-  const rakeL = new THREE.DirectionalLight(0xd8dce8, 0.52);
-  rakeL.position.set(-6, 1.2, 2);
-  scene.add(rakeL);
+  const keySpot = new THREE.SpotLight(0xffffff, 2.8, 10, Math.PI / 5, 0.12, 1.2);
+  keySpot.position.set(0, 2.2, 1.1);
+  const keyTarget = new THREE.Object3D();
+  keyTarget.position.set(0, 0.95, 0);
+  scene.add(keyTarget);
+  keySpot.target = keyTarget;
+  scene.add(keySpot);
 
-  return { key };
+  const syncViewerLight = (eyePosition) => {
+    viewerLight.position.copy(eyePosition);
+    viewerLight.position.y += 0.05;
+    keySpot.position.set(
+      eyePosition.x * 0.3,
+      eyePosition.y + 1.1,
+      eyePosition.z * 0.55 + 0.35,
+    );
+  };
+
+  return { viewerLight, syncViewerLight };
 }
 
 /** Subtly reflective studio floor (env-lit sheen — no extra render pass). */
@@ -325,10 +348,10 @@ export function createStudioGround(scene) {
   const ground = new THREE.Mesh(
     new THREE.CircleGeometry(40, 96),
     new THREE.MeshStandardMaterial({
-      color: 0x2a323c,
-      roughness: 0.38,
-      metalness: 0.55,
-      envMapIntensity: 1.1,
+      color: 0x4a5260,
+      roughness: 0.55,
+      metalness: 0.35,
+      envMapIntensity: 1.0,
     }),
   );
   ground.rotation.x = -Math.PI / 2;
