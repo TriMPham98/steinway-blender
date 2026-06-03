@@ -12,7 +12,7 @@ __pycache__/
 # Web viewer (npm install in web/; model via scripts/export_glb.py)
 /web/node_modules/
 /web/dist/
-/web/public/models/*.glb
+/web/public/models/steinway_keys.glb
 /release/
 
 # Built extension zip (regenerate via: blender --command extension build ...)
