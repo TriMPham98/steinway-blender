@@ -7,6 +7,7 @@ import { backendAvailable, findDefaultPort, listInputPorts } from "./midi.js";
 import { createSceneDebugPanel } from "./scene-debug.js";
 import {
   CAMERA_PRESETS,
+  createContactShadow,
   createStudioGround,
   fitCameraToModel,
   frameModel,
@@ -72,7 +73,7 @@ controls.maxPolarAngle = Math.PI * 0.49;
 
 const { lights, lightingConfig, syncViewerLight } = setupSeatedViewerLights(scene);
 const lightHelpers = createLightHelpers(scene, lights);
-createStudioGround(scene);
+const studioFloor = createStudioGround(scene);
 
 let modelRoot = null;
 let heroCameraDefaults = null;
@@ -378,6 +379,7 @@ async function init() {
   frameModel(model);
   refineMaterials(model);
   setupShadows(model);
+  createContactShadow(scene, model);
   const pose = fitCameraToModel(camera, controls, model);
   renderer.toneMappingExposure = pose.exposure;
   syncViewerLight(pose.viewerLightPosition);
@@ -491,6 +493,8 @@ function onResize() {
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   renderer.setSize(w, h);
+  const dpr = Math.min(window.devicePixelRatio, 2);
+  studioFloor.getRenderTarget().setSize(w * dpr, h * dpr);
 }
 window.addEventListener("resize", onResize);
 

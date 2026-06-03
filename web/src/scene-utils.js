@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { Reflector } from "three/examples/jsm/objects/Reflector.js";
 
 /**
  * Center model on ground and scale to a reasonable size for the viewer.
@@ -336,14 +337,20 @@ export function refineMaterials(root) {
   });
 }
 
-function radialBackground(inner, outer) {
+/**
+ * Vignetted studio cyclorama: a soft warm-neutral glow behind the piano that
+ * falls off to dark edges, so the backdrop has depth instead of reading flat.
+ */
+function radialBackground(center, mid, edge) {
   const c = document.createElement("canvas");
   c.width = c.height = 1024;
   const ctx = c.getContext("2d");
-  const g = ctx.createRadialGradient(512, 470, 40, 512, 470, 760);
-  g.addColorStop(0, inner);
-  g.addColorStop(1, outer);
-  ctx.fillStyle = outer;
+  // Focus the glow slightly above center so the horizon sits behind the piano.
+  const g = ctx.createRadialGradient(512, 460, 30, 512, 470, 820);
+  g.addColorStop(0.0, center);
+  g.addColorStop(0.5, mid);
+  g.addColorStop(1.0, edge);
+  ctx.fillStyle = edge;
   ctx.fillRect(0, 0, 1024, 1024);
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, 1024, 1024);
@@ -383,7 +390,7 @@ function roomEnvironment(pmrem) {
 export function setupEnvironment(renderer, scene) {
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = roomEnvironment(pmrem);
-  scene.background = radialBackground("#b8c0cc", "#8a94a4");
+  scene.background = radialBackground("#c9c6bf", "#9a9ca2", "#33363d");
   // Fog was flattening surface detail — keep backdrop gradient only.
   scene.fog = null;
   pmrem.dispose();
@@ -574,22 +581,134 @@ export function createLightHelpers(scene, lights) {
   };
 }
 
-/** Subtly reflective studio floor (env-lit sheen — no extra render pass). */
+/**
+ * Custom Reflector shader: a true planar mirror, but dimmed toward a dark floor
+ * base and faded out with distance so the piano reflection reads near the center
+ * while the far floor melts into the backdrop (no hard disc-edge horizon).
+ * `color`, `tDiffuse`, `textureMatrix` are required by the Reflector constructor.
+ */
+const STUDIO_FLOOR_SHADER = {
+  name: "StudioFloorReflectorShader",
+  uniforms: {
+    color: { value: null },
+    tDiffuse: { value: null },
+    textureMatrix: { value: null },
+    uFloorColor: { value: new THREE.Color(0x23262c) },
+    uReflStrength: { value: 0.55 },
+    uFadeStart: { value: 3.0 },
+    uFadeEnd: { value: 14.0 },
+  },
+  vertexShader: /* glsl */ `
+    uniform mat4 textureMatrix;
+    varying vec4 vUv;
+    varying float vDist;
+
+    #include <common>
+    #include <logdepthbuf_pars_vertex>
+
+    void main() {
+      vUv = textureMatrix * vec4( position, 1.0 );
+      // Plane local XY maps to the world ground plane (geometry is rotated flat):
+      // distance from center drives the radial reflection fade.
+      vDist = length( position.xy );
+      gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
+      #include <logdepthbuf_vertex>
+    }`,
+  fragmentShader: /* glsl */ `
+    uniform vec3 color;
+    uniform sampler2D tDiffuse;
+    uniform vec3 uFloorColor;
+    uniform float uReflStrength;
+    uniform float uFadeStart;
+    uniform float uFadeEnd;
+    varying vec4 vUv;
+    varying float vDist;
+
+    #include <logdepthbuf_pars_fragment>
+
+    float blendOverlay( float base, float blend ) {
+      return( base < 0.5 ? ( 2.0 * base * blend ) : ( 1.0 - 2.0 * ( 1.0 - base ) * ( 1.0 - blend ) ) );
+    }
+    vec3 blendOverlay( vec3 base, vec3 blend ) {
+      return vec3( blendOverlay( base.r, blend.r ), blendOverlay( base.g, blend.g ), blendOverlay( base.b, blend.b ) );
+    }
+
+    void main() {
+      #include <logdepthbuf_fragment>
+      vec4 base = texture2DProj( tDiffuse, vUv );
+      vec3 refl = blendOverlay( base.rgb, color );
+      float fade = 1.0 - smoothstep( uFadeStart, uFadeEnd, vDist );
+      vec3 col = mix( uFloorColor, refl, uReflStrength * fade );
+      gl_FragColor = vec4( col, 1.0 );
+      #include <tonemapping_fragment>
+      #include <colorspace_fragment>
+    }`,
+};
+
+/**
+ * Glossy "showroom glass" floor — a true planar reflection (Reflector) of the
+ * piano, dimmed and distance-faded so it grounds the model without a visible edge.
+ * Adds one extra render pass per frame.
+ * @returns {Reflector} the floor (use getRenderTarget().setSize() on resize)
+ */
 export function createStudioGround(scene) {
-  const ground = new THREE.Mesh(
-    new THREE.CircleGeometry(40, 96),
-    new THREE.MeshStandardMaterial({
-      color: 0x4a5260,
-      roughness: 0.55,
-      metalness: 0.35,
-      envMapIntensity: 1.0,
+  const dpr = Math.min(window.devicePixelRatio, 2);
+  const floor = new Reflector(new THREE.PlaneGeometry(80, 80), {
+    textureWidth: window.innerWidth * dpr,
+    textureHeight: window.innerHeight * dpr,
+    clipBias: 0.003,
+    // Neutral tint: dimming is handled by the shader's mix toward uFloorColor.
+    color: 0x808080,
+    shader: STUDIO_FLOOR_SHADER,
+  });
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = 0;
+  scene.add(floor);
+  return floor;
+}
+
+function softShadowTexture() {
+  const c = document.createElement("canvas");
+  c.width = c.height = 256;
+  const ctx = c.getContext("2d");
+  const g = ctx.createRadialGradient(128, 128, 8, 128, 128, 124);
+  g.addColorStop(0.0, "rgba(0,0,0,0.55)");
+  g.addColorStop(0.55, "rgba(0,0,0,0.28)");
+  g.addColorStop(1.0, "rgba(0,0,0,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 256, 256);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = SRGB;
+  return tex;
+}
+
+/**
+ * Soft elliptical contact shadow under the piano. The Reflector floor can't
+ * receive the scene's shadow map, so this blurred blob grounds the model instead.
+ * Sized to the loaded model's footprint.
+ * @param {THREE.Scene} scene
+ * @param {THREE.Object3D} model
+ */
+export function createContactShadow(scene, model) {
+  model.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(model);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+
+  const shadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(size.x * 1.5, size.z * 1.45),
+    new THREE.MeshBasicMaterial({
+      map: softShadowTexture(),
+      transparent: true,
+      depthWrite: false,
+      opacity: 0.9,
     }),
   );
-  ground.rotation.x = -Math.PI / 2;
-  ground.position.y = 0;
-  ground.receiveShadow = true;
-  scene.add(ground);
-  return ground;
+  shadow.rotation.x = -Math.PI / 2;
+  shadow.position.set(center.x, 0.004, center.z);
+  shadow.renderOrder = 1;
+  scene.add(shadow);
+  return shadow;
 }
 
 export function setupShadows(root) {
