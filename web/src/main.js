@@ -48,7 +48,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.98;
+renderer.toneMappingExposure = 1.12;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 viewport.appendChild(renderer.domElement);
@@ -65,8 +65,8 @@ controls.maxPolarAngle = Math.PI * 0.49;
 
 // Low-key studio: strong IBL + clearcoat turns black lacquer gray; sy_* skips
 // env maps and relies on these controlled direct lights for shape/highlights.
-scene.add(new THREE.HemisphereLight(0x242a36, 0x06080c, 0.28));
-const keyLight = new THREE.DirectionalLight(0xfff4e8, 1.65);
+scene.add(new THREE.HemisphereLight(0x303848, 0x0a0c12, 0.42));
+const keyLight = new THREE.DirectionalLight(0xfff6ee, 2.25);
 keyLight.position.set(3.2, 5.5, 2.4);
 keyLight.castShadow = true;
 keyLight.shadow.mapSize.set(2048, 2048);
@@ -79,10 +79,10 @@ keyLight.shadow.camera.bottom = -3;
 keyLight.shadow.bias = -0.0004;
 keyLight.shadow.normalBias = 0.02;
 scene.add(keyLight);
-const rim = new THREE.DirectionalLight(0x88a0c8, 0.38);
+const rim = new THREE.DirectionalLight(0x98b0d8, 0.55);
 rim.position.set(-4, 3, -4);
 scene.add(rim);
-const fill = new THREE.DirectionalLight(0xa09890, 0.22);
+const fill = new THREE.DirectionalLight(0xb0a898, 0.38);
 fill.position.set(-1, 2, 4);
 scene.add(fill);
 

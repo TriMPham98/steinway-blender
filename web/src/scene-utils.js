@@ -104,7 +104,7 @@ function lacquerFromExport(mat, { matte, lite }) {
     metalness: 0,
     clearcoat: matte ? (lite ? 0 : 0.15) : lite ? 0.3 : 0.75,
     clearcoatRoughness: matte ? 0.38 : lite ? 0.26 : 0.06,
-    envMapIntensity: lite ? 0.08 : 0.05,
+    envMapIntensity: lite ? 0.14 : 0.1,
     specularIntensity: lite ? 0.45 : 0.55,
     specularColor: new THREE.Color(lite ? 0xffffff : 0x9999a0),
   });
@@ -117,7 +117,7 @@ function dappleCushion(mat) {
     color: new THREE.Color(0xffffff),
     metalness: 0,
     roughness: typeof mat.roughness === "number" ? mat.roughness : 0.38,
-    envMapIntensity: 0.55,
+    envMapIntensity: 0.72,
   };
   if (mat.map) {
     opts.map = mat.map;
@@ -141,7 +141,7 @@ function tuneMetal(mat, fallbackColor, fallbackRough) {
   if (!mat.roughnessMap && typeof mat.roughness !== "number") {
     mat.roughness = fallbackRough;
   }
-  mat.envMapIntensity = 0.45;
+  mat.envMapIntensity = 0.65;
   if (!mat.map) mat.color = new THREE.Color(fallbackColor);
   return mat;
 }
@@ -178,7 +178,7 @@ export function refineMaterials(root) {
       if (!mat.roughnessMap && typeof mat.roughness !== "number") {
         mat.roughness = 0.55;
       }
-      mat.envMapIntensity = 0.55;
+      mat.envMapIntensity = 0.75;
       if (!mat.map) mat.color = new THREE.Color(0x7c5a3a);
       next = mat;
     } else if (/dapple|CW-Plastic/i.test(name)) {
@@ -230,14 +230,14 @@ function radialBackground(inner, outer) {
 /** Low-key PMREM so metal/wood get subtle reflections without washing black lacquer. */
 function darkStudioEnvironment(pmrem) {
   const envScene = new THREE.Scene();
-  envScene.add(new THREE.AmbientLight(0x1a1e28, 0.35));
-  const soft = new THREE.DirectionalLight(0x9098a8, 0.55);
+  envScene.add(new THREE.AmbientLight(0x282e3a, 0.55));
+  const soft = new THREE.DirectionalLight(0xa8b0c0, 0.85);
   soft.position.set(2, 4, 3);
   envScene.add(soft);
-  const fill = new THREE.DirectionalLight(0x303848, 0.28);
+  const fill = new THREE.DirectionalLight(0x404858, 0.45);
   fill.position.set(-3, 1, -2);
   envScene.add(fill);
-  return pmrem.fromScene(envScene, 0.06).texture;
+  return pmrem.fromScene(envScene, 0.05).texture;
 }
 
 /**
@@ -247,8 +247,8 @@ function darkStudioEnvironment(pmrem) {
 export function setupEnvironment(renderer, scene) {
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = darkStudioEnvironment(pmrem);
-  scene.background = radialBackground("#1a1e28", "#06080e");
-  scene.fog = new THREE.Fog(0x06080e, 10, 30);
+  scene.background = radialBackground("#242a38", "#0c1018");
+  scene.fog = new THREE.Fog(0x0c1018, 11, 32);
   pmrem.dispose();
   return scene.environment;
 }
@@ -258,10 +258,10 @@ export function createStudioGround(scene) {
   const ground = new THREE.Mesh(
     new THREE.CircleGeometry(40, 96),
     new THREE.MeshStandardMaterial({
-      color: 0x0a0c11,
-      roughness: 0.34,
-      metalness: 0.7,
-      envMapIntensity: 0.7,
+      color: 0x141820,
+      roughness: 0.32,
+      metalness: 0.65,
+      envMapIntensity: 0.9,
     }),
   );
   ground.rotation.x = -Math.PI / 2;
