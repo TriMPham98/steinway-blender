@@ -108,6 +108,29 @@ const cameraTween = {
 const easeInOutCubic = (t) =>
   t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
+/** 1–4 → camera presets (matches drawer view button order). */
+const VIEW_PRESET_BY_KEY = {
+  1: CAMERA_PRESETS.hero,
+  2: CAMERA_PRESETS.front,
+  3: CAMERA_PRESETS.top,
+  4: CAMERA_PRESETS.seated,
+};
+
+function isEditableFocusTarget(el) {
+  if (!el || !(el instanceof HTMLElement)) return false;
+  const tag = el.tagName;
+  return (
+    tag === "INPUT" ||
+    tag === "SELECT" ||
+    tag === "TEXTAREA" ||
+    el.isContentEditable
+  );
+}
+
+function goToViewPreset(preset) {
+  animateCameraTo(preset, 1.0);
+}
+
 /** Smoothly fly the camera to a pose ({position,target,fov} arrays or vec3s). */
 function animateCameraTo(pose, duration = 1) {
   cameraTween.fromPos.copy(camera.position);
@@ -355,23 +378,24 @@ async function init() {
 
   ui.btnStart.addEventListener("click", onStart);
   ui.btnStop.addEventListener("click", onStop);
-  ui.viewHero.addEventListener("click", () =>
-    animateCameraTo(CAMERA_PRESETS.hero, 1.0),
-  );
-  ui.viewFront.addEventListener("click", () =>
-    animateCameraTo(CAMERA_PRESETS.front, 1.0),
-  );
-  ui.viewTop.addEventListener("click", () =>
-    animateCameraTo(CAMERA_PRESETS.top, 1.0),
-  );
-  ui.viewSeated.addEventListener("click", () =>
-    animateCameraTo(CAMERA_PRESETS.seated, 1.0),
-  );
+  ui.viewHero.addEventListener("click", () => goToViewPreset(CAMERA_PRESETS.hero));
+  ui.viewFront.addEventListener("click", () => goToViewPreset(CAMERA_PRESETS.front));
+  ui.viewTop.addEventListener("click", () => goToViewPreset(CAMERA_PRESETS.top));
+  ui.viewSeated.addEventListener("click", () => goToViewPreset(CAMERA_PRESETS.seated));
 
   ui.menuToggle.addEventListener("click", toggleDrawer);
   ui.drawerClose.addEventListener("click", closeDrawer);
 
   window.addEventListener("keydown", (e) => {
+    if (isEditableFocusTarget(document.activeElement)) return;
+
+    const preset = VIEW_PRESET_BY_KEY[e.key];
+    if (preset) {
+      e.preventDefault();
+      goToViewPreset(preset);
+      return;
+    }
+
     if (e.key !== "Escape") return;
     if (ui.drawer.classList.contains("open")) closeDrawer();
     else if (live?.isRunning) onStop();

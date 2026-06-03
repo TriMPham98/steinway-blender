@@ -366,6 +366,18 @@ body,
   transform: scale(0.97);
 }
 
+.views button kbd {
+  margin-left: 0.2rem;
+  padding: 0.05rem 0.3rem;
+  font-size: 0.68rem;
+  font-weight: 500;
+  font-family: inherit;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+}
+
 /* ---------- Scene debug panel ---------- */
 .scene-debug {
   position: absolute;
