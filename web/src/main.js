@@ -108,13 +108,40 @@ const cameraTween = {
 const easeInOutCubic = (t) =>
   t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
-/** 1–4 → camera presets (matches drawer view button order). */
+/** 1–4 → preset id (matches drawer view button order). */
 const VIEW_PRESET_BY_KEY = {
-  1: CAMERA_PRESETS.hero,
-  2: CAMERA_PRESETS.front,
-  3: CAMERA_PRESETS.top,
-  4: CAMERA_PRESETS.seated,
+  1: "hero",
+  2: "front",
+  3: "top",
+  4: "seated",
 };
+
+const viewPresetButtons = {
+  hero: ui.viewHero,
+  front: ui.viewFront,
+  top: ui.viewTop,
+  seated: ui.viewSeated,
+};
+
+let activeViewPreset = null;
+
+function setActiveViewPreset(id) {
+  activeViewPreset = id;
+  for (const [presetId, btn] of Object.entries(viewPresetButtons)) {
+    const on = presetId === id;
+    btn.classList.toggle("is-active", on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+}
+
+function clearActiveViewPreset() {
+  if (!activeViewPreset) return;
+  activeViewPreset = null;
+  for (const btn of Object.values(viewPresetButtons)) {
+    btn.classList.remove("is-active");
+    btn.setAttribute("aria-pressed", "false");
+  }
+}
 
 function isEditableFocusTarget(el) {
   if (!el || !(el instanceof HTMLElement)) return false;
@@ -127,8 +154,22 @@ function isEditableFocusTarget(el) {
   );
 }
 
-function goToViewPreset(preset) {
-  animateCameraTo(preset, 1.0);
+function goToViewPreset(id, duration = 1.0) {
+  setActiveViewPreset(id);
+  animateCameraTo(CAMERA_PRESETS[id], duration);
+}
+
+function bindViewPresetClearOnUserInput() {
+  controls.addEventListener("start", () => {
+    if (!cameraTween.active) clearActiveViewPreset();
+  });
+  renderer.domElement.addEventListener(
+    "wheel",
+    () => {
+      if (!cameraTween.active) clearActiveViewPreset();
+    },
+    { passive: true },
+  );
 }
 
 /** Smoothly fly the camera to a pose ({position,target,fov} arrays or vec3s). */
@@ -261,7 +302,7 @@ function onStart() {
   try {
     live.start(midiAccess, port);
     setTransportRunning(true);
-    animateCameraTo(CAMERA_PRESETS.seated, 1.0);
+    goToViewPreset("seated");
   } catch (err) {
     setStatus(String(err.message ?? err));
   }
@@ -330,6 +371,7 @@ async function init() {
     lights,
     lightingConfig,
     lightHelpers,
+    onManualCameraChange: clearActiveViewPreset,
     mount: viewport,
     getCameraDefaults: () => {
       if (modelRoot) {
@@ -378,10 +420,10 @@ async function init() {
 
   ui.btnStart.addEventListener("click", onStart);
   ui.btnStop.addEventListener("click", onStop);
-  ui.viewHero.addEventListener("click", () => goToViewPreset(CAMERA_PRESETS.hero));
-  ui.viewFront.addEventListener("click", () => goToViewPreset(CAMERA_PRESETS.front));
-  ui.viewTop.addEventListener("click", () => goToViewPreset(CAMERA_PRESETS.top));
-  ui.viewSeated.addEventListener("click", () => goToViewPreset(CAMERA_PRESETS.seated));
+  ui.viewHero.addEventListener("click", () => goToViewPreset("hero"));
+  ui.viewFront.addEventListener("click", () => goToViewPreset("front"));
+  ui.viewTop.addEventListener("click", () => goToViewPreset("top"));
+  ui.viewSeated.addEventListener("click", () => goToViewPreset("seated"));
 
   ui.menuToggle.addEventListener("click", toggleDrawer);
   ui.drawerClose.addEventListener("click", closeDrawer);
@@ -389,10 +431,10 @@ async function init() {
   window.addEventListener("keydown", (e) => {
     if (isEditableFocusTarget(document.activeElement)) return;
 
-    const preset = VIEW_PRESET_BY_KEY[e.key];
-    if (preset) {
+    const presetId = VIEW_PRESET_BY_KEY[e.key];
+    if (presetId) {
       e.preventDefault();
-      goToViewPreset(preset);
+      goToViewPreset(presetId);
       return;
     }
 
@@ -406,8 +448,10 @@ async function init() {
     .multiplyScalar(1.8)
     .setY(CAMERA_PRESETS.hero.position[1] + 1.2);
   camera.position.copy(start);
-  animateCameraTo(CAMERA_PRESETS.hero, 2.2);
+  goToViewPreset("hero", 2.2);
 }
+
+bindViewPresetClearOnUserInput();
 
 renderer.domElement.addEventListener("pointerdown", pointerDown);
 window.addEventListener("pointerup", pointerUp);

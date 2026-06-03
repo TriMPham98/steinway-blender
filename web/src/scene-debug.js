@@ -123,6 +123,7 @@ function mountSliders(body, specs, sliders) {
  *     keySpotCamZAdd: number,
  *   },
  *   lightHelpers: { setVisible: (visible: boolean) => void, update: () => void },
+ *   onManualCameraChange?: () => void,
  *   mount: HTMLElement,
  *   getCameraDefaults: () => {
  *     position: import("three").Vector3,
@@ -133,8 +134,17 @@ function mountSliders(body, specs, sliders) {
  * }} opts
  */
 export function createSceneDebugPanel(opts) {
-  const { camera, controls, renderer, lights, lightingConfig, lightHelpers, mount, getCameraDefaults } =
-    opts;
+  const {
+    camera,
+    controls,
+    renderer,
+    lights,
+    lightingConfig,
+    lightHelpers,
+    onManualCameraChange,
+    mount,
+    getCameraDefaults,
+  } = opts;
 
   const panel = document.createElement("details");
   panel.className = "scene-debug";
@@ -595,10 +605,14 @@ export function createSceneDebugPanel(opts) {
     }
   }
 
+  const isCameraControl = (id) =>
+    id.startsWith("cam-") || id.startsWith("tgt-");
+
   for (const row of Object.values(sliders)) {
     row.input.addEventListener("input", () => {
       row.out.textContent = fmt(row.input.value);
       applyToScene();
+      if (isCameraControl(row.input.id)) onManualCameraChange?.();
     });
   }
 
@@ -614,6 +628,7 @@ export function createSceneDebugPanel(opts) {
     renderer.toneMappingExposure = d.exposure;
     controls.update();
     syncSlidersFromScene();
+    onManualCameraChange?.();
   }
 
   function resetLights() {
