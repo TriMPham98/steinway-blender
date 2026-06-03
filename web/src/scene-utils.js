@@ -187,13 +187,18 @@ function lacquerFromExport(mat, { matte, lite }) {
           : 1.0
         : 0.1;
   return new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color(lite ? 0xcfc8b8 : 0x000000),
+    // Blender base is pure black; lift it a hair so unreflected areas read as
+    // deep charcoal (mimics Blender's view-transform black lift) instead of an
+    // ACES-crushed void that flattens the piano into a silhouette.
+    color: new THREE.Color(lite ? 0xcfc8b8 : 0x0a0a0a),
     roughness,
     metalness: 0,
-    clearcoat: matte ? (lite ? 0 : 0.12) : lite ? 0.28 : 0.55,
-    clearcoatRoughness: matte ? 0.4 : lite ? 0.22 : 0.07,
-    envMapIntensity: lite ? 0.7 : 0.52,
-    specularIntensity: lite ? 0.65 : 0.58,
+    clearcoat: matte ? (lite ? 0 : 0.12) : lite ? 0.28 : 0.85,
+    clearcoatRoughness: matte ? 0.4 : lite ? 0.22 : 0.06,
+    // Glossy lacquer gets its form from reflecting the room — the old 0.52 barely
+    // picked up the environment, so the black lid looked flat. Crank it up.
+    envMapIntensity: lite ? 0.7 : matte ? 0.95 : 1.35,
+    specularIntensity: lite ? 0.65 : 0.62,
     specularColor: new THREE.Color(lite ? 0xffffff : 0xd0d4e0),
   });
 }
@@ -302,14 +307,28 @@ function radialBackground(inner, outer) {
 /** Bright room probe for lacquer / wood reflections. */
 function roomEnvironment(pmrem) {
   const envScene = new THREE.Scene();
+  envScene.background = new THREE.Color(0x2a3040);
   envScene.add(new THREE.AmbientLight(0xe8ecf4, 1.1));
-  const window = new THREE.DirectionalLight(0xfff8f0, 1.35);
+  const window = new THREE.DirectionalLight(0xfff8f0, 1.6);
   window.position.set(1, 3, 4);
   envScene.add(window);
   const fill = new THREE.DirectionalLight(0xc0c8d8, 0.75);
   fill.position.set(-2, 2, -1);
   envScene.add(fill);
-  return pmrem.fromScene(envScene, 0.1).texture;
+
+  // Bright overhead softbox panels — glossy black lacquer needs distinct bright
+  // shapes to reflect, otherwise it has no highlights and reads as flat.
+  const panel = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  const makePanel = (w, h, x, y, z, rx) => {
+    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), panel);
+    m.position.set(x, y, z);
+    m.rotation.x = rx;
+    envScene.add(m);
+  };
+  makePanel(6, 2.2, 0, 7, 1.5, -Math.PI / 2); // ceiling strip overhead
+  makePanel(4, 3, 0, 4, 6, 0); // front fill window
+
+  return pmrem.fromScene(envScene, 0.04).texture;
 }
 
 /** Light room backdrop + IBL (seated viewing context). */
