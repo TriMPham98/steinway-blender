@@ -50,6 +50,58 @@ def _is_pedal(obj):
     return obj.get("steinway_role") == "sustain_pedal"
 
 
+def _is_bench(obj):
+    return obj.name in ("Seat Cushion", "Seat Frame")
+
+
+def _fix_bench_cushion_materials():
+    """Dapple only on the top face; sides get sy_dark_shiny like the frame.
+
+    Flattened glTF UVs on vertical faces turn the dapple tile into piano-key
+    stripes in Three.js. Blender hides this via cw-scale node groups.
+    """
+    import bpy
+    import bmesh
+
+    obj = bpy.data.objects.get("Seat Cushion")
+    dark = bpy.data.materials.get("sy_dark_shiny")
+    if obj is None or obj.type != "MESH" or dark is None:
+        return False
+
+    mesh = obj.data
+    dapple_idx = None
+    for i, slot in enumerate(obj.material_slots):
+        if slot.material and "dapple" in slot.material.name.lower():
+            dapple_idx = i
+            break
+    if dapple_idx is None:
+        return False
+
+    if dark.name not in [s.material.name for s in obj.material_slots if s.material]:
+        mesh.materials.append(dark)
+    dark_idx = next(
+        i for i, s in enumerate(obj.material_slots) if s.material and s.material == dark
+    )
+
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    bm.faces.ensure_lookup_table()
+    top = 0
+    side = 0
+    for face in bm.faces:
+        if face.normal.z > 0.85:
+            face.material_index = dapple_idx
+            top += 1
+        else:
+            face.material_index = dark_idx
+            side += 1
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+    print(f"[export] bench cushion: {top} top (dapple), {side} side (lacquer) faces")
+    return True
+
+
 def _strip_lid_hinge():
     """Remove leftover 0.5.x lid rig so the glTF scene root is not Key Lid Hinge."""
     import bpy
@@ -93,7 +145,7 @@ def _join_static():
     for obj in bpy.data.objects:
         if obj.type != "MESH":
             continue
-        if _is_key(obj) or _is_pedal(obj):
+        if _is_key(obj) or _is_pedal(obj) or _is_bench(obj):
             continue
         obj.select_set(True)
         targets.append(obj)
@@ -297,6 +349,7 @@ def main():
     t0 = time.time()
     _strip_lid_hinge()
     stripped = _strip_scene_props()
+    _fix_bench_cushion_materials()
     merged = _join_static()
     manifest = _key_manifest()
     with open(manifest_path, "w", encoding="utf-8") as fh:

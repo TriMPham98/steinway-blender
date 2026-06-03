@@ -119,13 +119,16 @@ function dappleCushion(mat) {
       metalness: 0,
     });
   }
+  const map = mat.map.clone();
+  map.wrapS = map.wrapT = THREE.RepeatWrapping;
+  map.repeat.set(1.8, 1.8);
   const next = new THREE.MeshStandardMaterial({
     name: mat.name,
-    map: mat.map,
+    map,
     color: new THREE.Color(0xffffff),
     roughness: typeof mat.roughness === "number" ? mat.roughness : 0.38,
     metalness: 0,
-    envMapIntensity: 0.3,
+    envMapIntensity: 0.35,
   });
   prepMaps(next);
   return next;
