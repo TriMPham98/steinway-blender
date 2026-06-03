@@ -53,6 +53,58 @@ body,
   height: 100%;
 }
 
+/* Rule-of-thirds framing overlay (debug) */
+.rule-thirds {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.rule-thirds.is-on {
+  opacity: 1;
+}
+
+.rule-thirds-line {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.42);
+  box-shadow: 0 0 1px rgba(0, 0, 0, 0.35);
+}
+
+.rule-thirds-line--v1 {
+  left: 33.333%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  transform: translateX(-0.5px);
+}
+
+.rule-thirds-line--v2 {
+  left: 66.666%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  transform: translateX(-0.5px);
+}
+
+.rule-thirds-line--h1 {
+  top: 33.333%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  transform: translateY(-0.5px);
+}
+
+.rule-thirds-line--h2 {
+  top: 66.666%;
+  left: 0;
+  right: 0;
+  height: 1px;
+  transform: translateY(-0.5px);
+}
+
 /* ---------- Gear toggle ---------- */
 .menu-toggle {
   position: absolute;
@@ -431,6 +483,28 @@ body,
   flex-direction: column;
   gap: 0.15rem;
   padding-bottom: 0.35rem;
+}
+
+.debug-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 1.25rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.debug-toggle input {
+  width: 0.75rem;
+  height: 0.75rem;
+  margin: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.debug-toggle span {
+  font-size: 0.62rem;
+  color: #9aa6bc;
 }
 
 .debug-row {

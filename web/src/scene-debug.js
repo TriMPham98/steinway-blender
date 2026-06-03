@@ -26,6 +26,38 @@ function fmt(v) {
   return Math.abs(n) >= 10 ? n.toFixed(1) : n.toFixed(2);
 }
 
+/** Full-viewport 3×3 grid (pointer-events none). */
+function createRuleOfThirdsOverlay(container) {
+  const overlay = document.createElement("div");
+  overlay.className = "rule-thirds";
+  overlay.setAttribute("aria-hidden", "true");
+  for (const axis of ["v1", "v2", "h1", "h2"]) {
+    const line = document.createElement("span");
+    line.className = `rule-thirds-line rule-thirds-line--${axis}`;
+    overlay.append(line);
+  }
+  container.appendChild(overlay);
+  return {
+    setVisible(on) {
+      overlay.classList.toggle("is-on", on);
+      overlay.setAttribute("aria-hidden", on ? "false" : "true");
+    },
+  };
+}
+
+function debugToggle(label, id, checked = false) {
+  const wrap = document.createElement("label");
+  wrap.className = "debug-toggle";
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.id = id;
+  input.checked = checked;
+  const span = document.createElement("span");
+  span.textContent = label;
+  wrap.append(input, span);
+  return { wrap, input };
+}
+
 function debugGroup(title, open = false) {
   const details = document.createElement("details");
   details.className = "debug-group";
@@ -109,9 +141,16 @@ export function createSceneDebugPanel(opts) {
   body.appendChild(toolbar);
 
   const sliders = {};
+  const ruleOfThirds = createRuleOfThirdsOverlay(mount);
 
   const camGroup = debugGroup("Camera", true);
   body.appendChild(camGroup.details);
+
+  const thirdsToggle = debugToggle("Rule of thirds", "debug-thirds", false);
+  thirdsToggle.input.addEventListener("change", () => {
+    ruleOfThirds.setVisible(thirdsToggle.input.checked);
+  });
+  camGroup.body.appendChild(thirdsToggle.wrap);
 
   const pos = vec3Group(
     "Pos",

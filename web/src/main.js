@@ -46,7 +46,7 @@ const camera = new THREE.PerspectiveCamera(
   0.05,
   50,
 );
-camera.position.set(2.53, 1.35, 2.21);
+camera.position.set(...HERO_CAMERA_DEFAULTS.position);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -61,7 +61,7 @@ viewport.appendChild(renderer.domElement);
 setupEnvironment(renderer, scene);
 
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(0.14, 0.71, 0.19);
+controls.target.set(...HERO_CAMERA_DEFAULTS.target);
 controls.enableDamping = true;
 controls.dampingFactor = 0.06;
 controls.minDistance = 1.0;

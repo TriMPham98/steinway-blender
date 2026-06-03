@@ -36,8 +36,8 @@ export function frameModel(root) {
 
 /** Default hero (¾ product) view — tuned in scene debug. */
 export const HERO_CAMERA_DEFAULTS = {
-  position: [2.53, 1.35, 2.21],
-  target: [0.14, 0.71, 0.19],
+  position: [2.39, 1.38, 2.37],
+  target: [0, 0.74, 0.35],
   fov: 44,
   exposure: 1.86,
 };
