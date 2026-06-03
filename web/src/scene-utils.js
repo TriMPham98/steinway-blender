@@ -46,6 +46,7 @@ export const HERO_CAMERA_DEFAULTS = {
 export const LIGHTING_DEFAULTS = {
   ambientIntensity: 0.72,
   hemiIntensity: 1.05,
+  hemiPosition: [0, 6, 0],
   ceilingIntensity: 1.15,
   ceilingPosition: [0, 5, 0.5],
   roomIntensity: 0.65,
@@ -53,7 +54,21 @@ export const LIGHTING_DEFAULTS = {
   viewerIntensity: 6.5,
   viewerDistance: 14,
   viewerDecay: 1.8,
+  viewerFollowCamera: true,
+  viewerOffset: [0, 0.05, 0],
+  viewerPosition: [0, 1.05, 1.65],
   keySpotIntensity: 2.8,
+  keySpotDistance: 10,
+  keySpotAngleDeg: 36,
+  keySpotPenumbra: 0.12,
+  keySpotDecay: 1.2,
+  keySpotFollowCamera: true,
+  keySpotPosition: [0, 2.2, 1.1],
+  keySpotTarget: [0, 0.95, 0],
+  keySpotCamX: 0.3,
+  keySpotCamY: 1.1,
+  keySpotCamZMul: 0.55,
+  keySpotCamZAdd: 0.35,
 };
 
 /** Snap-to preset views for the viewer. Tune positions by eye if framing drifts. */
@@ -377,7 +392,27 @@ export function setupEnvironment(renderer, scene) {
 
 /**
  * Lighting as if you're seated at the piano: room fill + lamp from your viewpoint.
- * @returns {{ viewerLight: THREE.PointLight, syncViewerLight: (pos: THREE.Vector3) => void }}
+ * @returns {{
+ *   lights: {
+ *     ambient: THREE.AmbientLight,
+ *     hemi: THREE.HemisphereLight,
+ *     ceiling: THREE.DirectionalLight,
+ *     room: THREE.DirectionalLight,
+ *     viewerLight: THREE.PointLight,
+ *     keySpot: THREE.SpotLight,
+ *     keySpotTarget: THREE.Object3D,
+ *   },
+ *   lightingConfig: {
+ *     viewerFollowCamera: boolean,
+ *     viewerOffset: THREE.Vector3,
+ *     keySpotFollowCamera: boolean,
+ *     keySpotCamX: number,
+ *     keySpotCamY: number,
+ *     keySpotCamZMul: number,
+ *     keySpotCamZAdd: number,
+ *   },
+ *   syncViewerLight: (pos: THREE.Vector3) => void,
+ * }}
  */
 export function setupSeatedViewerLights(scene) {
   const d = LIGHTING_DEFAULTS;
@@ -386,6 +421,7 @@ export function setupSeatedViewerLights(scene) {
   scene.add(ambient);
 
   const hemi = new THREE.HemisphereLight(0xf8fafc, 0x9098a8, d.hemiIntensity);
+  hemi.position.set(...d.hemiPosition);
   scene.add(hemi);
 
   const ceiling = new THREE.DirectionalLight(0xfffaf5, d.ceilingIntensity);
@@ -402,34 +438,139 @@ export function setupSeatedViewerLights(scene) {
     d.viewerDistance,
     d.viewerDecay,
   );
-  viewerLight.position.set(0, 1.05, 1.65);
+  viewerLight.position.set(...d.viewerPosition);
   viewerLight.castShadow = true;
   viewerLight.shadow.mapSize.set(1024, 1024);
   viewerLight.shadow.bias = -0.0002;
   viewerLight.shadow.normalBias = 0.012;
   scene.add(viewerLight);
 
-  const keySpot = new THREE.SpotLight(0xffffff, d.keySpotIntensity, 10, Math.PI / 5, 0.12, 1.2);
-  keySpot.position.set(0, 2.2, 1.1);
-  const keyTarget = new THREE.Object3D();
-  keyTarget.position.set(0, 0.95, 0);
-  scene.add(keyTarget);
-  keySpot.target = keyTarget;
+  const keySpotAngle = THREE.MathUtils.degToRad(d.keySpotAngleDeg);
+  const keySpot = new THREE.SpotLight(
+    0xffffff,
+    d.keySpotIntensity,
+    d.keySpotDistance,
+    keySpotAngle,
+    d.keySpotPenumbra,
+    d.keySpotDecay,
+  );
+  keySpot.position.set(...d.keySpotPosition);
+  const keySpotTarget = new THREE.Object3D();
+  keySpotTarget.position.set(...d.keySpotTarget);
+  scene.add(keySpotTarget);
+  keySpot.target = keySpotTarget;
   scene.add(keySpot);
 
+  const lightingConfig = {
+    viewerFollowCamera: d.viewerFollowCamera,
+    viewerOffset: new THREE.Vector3(...d.viewerOffset),
+    keySpotFollowCamera: d.keySpotFollowCamera,
+    keySpotCamX: d.keySpotCamX,
+    keySpotCamY: d.keySpotCamY,
+    keySpotCamZMul: d.keySpotCamZMul,
+    keySpotCamZAdd: d.keySpotCamZAdd,
+  };
+
   const syncViewerLight = (eyePosition) => {
-    viewerLight.position.copy(eyePosition);
-    viewerLight.position.y += 0.05;
-    keySpot.position.set(
-      eyePosition.x * 0.3,
-      eyePosition.y + 1.1,
-      eyePosition.z * 0.55 + 0.35,
-    );
+    if (lightingConfig.viewerFollowCamera) {
+      viewerLight.position.copy(eyePosition).add(lightingConfig.viewerOffset);
+    }
+    if (lightingConfig.keySpotFollowCamera) {
+      const c = lightingConfig;
+      keySpot.position.set(
+        eyePosition.x * c.keySpotCamX,
+        eyePosition.y + c.keySpotCamY,
+        eyePosition.z * c.keySpotCamZMul + c.keySpotCamZAdd,
+      );
+    }
   };
 
   return {
-    lights: { ambient, hemi, ceiling, room, viewerLight, keySpot },
+    lights: { ambient, hemi, ceiling, room, viewerLight, keySpot, keySpotTarget },
+    lightingConfig,
     syncViewerLight,
+  };
+}
+
+function wireRangeSphere(color) {
+  const mesh = new THREE.Mesh(
+    new THREE.SphereGeometry(1, 24, 16),
+    new THREE.MeshBasicMaterial({
+      color,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.3,
+      depthWrite: false,
+    }),
+  );
+  mesh.renderOrder = 998;
+  return mesh;
+}
+
+function wireSourceMarker(color, size = 0.12) {
+  const mesh = new THREE.Mesh(
+    new THREE.OctahedronGeometry(size, 0),
+    new THREE.MeshBasicMaterial({ color, wireframe: true }),
+  );
+  mesh.renderOrder = 999;
+  return mesh;
+}
+
+/**
+ * Debug wireframes for each scene light (source + reach). Hidden until toggled on.
+ * @param {THREE.Scene} scene
+ * @param {ReturnType<typeof setupSeatedViewerLights>["lights"]} lights
+ */
+export function createLightHelpers(scene, lights) {
+  const group = new THREE.Group();
+  group.name = "light-helpers";
+  group.visible = false;
+
+  const ambientMarker = wireSourceMarker(0xc8d0e0, 0.1);
+  ambientMarker.position.set(0, 1.15, 0);
+  group.add(ambientMarker);
+
+  const hemiHelper = new THREE.HemisphereLightHelper(lights.hemi, 0.55, 0xf8fafc);
+  group.add(hemiHelper);
+
+  const ceilingHelper = new THREE.DirectionalLightHelper(lights.ceiling, 0.45, 0xfffaf5);
+  const roomHelper = new THREE.DirectionalLightHelper(lights.room, 0.4, 0xe8ecf8);
+  group.add(ceilingHelper, roomHelper);
+
+  const viewerSource = new THREE.PointLightHelper(lights.viewerLight, 0.14, 0xfff6ea);
+  const viewerRange = wireRangeSphere(0xfff6ea);
+  group.add(viewerSource, viewerRange);
+
+  const keySpotHelper = new THREE.SpotLightHelper(lights.keySpot, 0xffffff);
+  const keySpotRange = wireRangeSphere(0xffffff);
+  const keyTargetMarker = wireSourceMarker(0xffffff, 0.07);
+  group.add(keySpotHelper, keySpotRange, keyTargetMarker);
+
+  scene.add(group);
+
+  const syncRangeSphere = (mesh, light, fallback = 8) => {
+    mesh.position.copy(light.position);
+    const r = light.distance > 0 ? light.distance : fallback;
+    mesh.scale.setScalar(r);
+  };
+
+  const update = () => {
+    hemiHelper.update();
+    ceilingHelper.update();
+    roomHelper.update();
+    viewerSource.update();
+    keySpotHelper.update();
+    syncRangeSphere(viewerRange, lights.viewerLight, lights.viewerLight.distance || 14);
+    syncRangeSphere(keySpotRange, lights.keySpot, lights.keySpot.distance || 10);
+    keyTargetMarker.position.copy(lights.keySpotTarget.position);
+  };
+
+  return {
+    group,
+    setVisible(visible) {
+      group.visible = visible;
+    },
+    update,
   };
 }
 

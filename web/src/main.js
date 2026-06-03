@@ -15,6 +15,7 @@ import {
   HERO_CAMERA_DEFAULTS,
   setupEnvironment,
   setupShadows,
+  createLightHelpers,
   setupSeatedViewerLights,
   stripBench,
   stripEmbeddedGround,
@@ -69,7 +70,8 @@ controls.minDistance = 1.0;
 controls.maxDistance = 12;
 controls.maxPolarAngle = Math.PI * 0.49;
 
-const { lights, syncViewerLight } = setupSeatedViewerLights(scene);
+const { lights, lightingConfig, syncViewerLight } = setupSeatedViewerLights(scene);
+const lightHelpers = createLightHelpers(scene, lights);
 createStudioGround(scene);
 
 let modelRoot = null;
@@ -303,6 +305,8 @@ async function init() {
     controls,
     renderer,
     lights,
+    lightingConfig,
+    lightHelpers,
     mount: viewport,
     getCameraDefaults: () => {
       if (modelRoot) {
@@ -402,6 +406,7 @@ function animate() {
   updateCameraTween(dt);
   controls.update();
   syncViewerLight(camera.position);
+  if (lightHelpers.group.visible) lightHelpers.update();
   renderer.render(scene, camera);
 }
 
