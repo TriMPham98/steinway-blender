@@ -8,11 +8,10 @@
 Pipeline (source of truth: ``assets/steinway_grand_playable.blend``):
 
 1. Strip scene props (Floor, oversized meshes).
-2. **Bench** — apply object scale; replace only the cushion with a bound-box solid
-   (source mesh is wavy in local space); keep frame geometry; join as
-   ``Piano_Bench``.
-3. **Body** — join remaining static meshes into ``Piano_Static``.
-4. Flatten materials to fast Principled trees; export GLB. Web viewer refines by
+2. **Bench** — remove ``Seat Cushion``, ``Seat Frame``, and any ``Piano_Bench``.
+3. **Bench legs** — remove the four bench leg meshes (``Leg-01`` … ``Leg-04``) only.
+4. **Body** — join remaining static meshes into ``Piano_Static``.
+5. Flatten materials to fast Principled trees; export GLB. Web viewer refines by
    material name (``web/src/scene-utils.js``).
 
 Keys stay separate ``Key.NNN`` with ``midi_note``; sustain pedal keeps
@@ -62,111 +61,39 @@ def _is_bench(obj):
     return obj.name in ("Seat Cushion", "Seat Frame", "Piano_Bench")
 
 
-def _apply_mesh_transforms(obj):
-    """Bake non-uniform object scale into mesh data (glTF scale nodes deform the bench)."""
+_BENCH_LEG_NAMES = frozenset({"Leg-01", "Leg-02", "Leg-03", "Leg-04"})
+
+
+def _is_bench_leg(obj):
+    return obj.name in _BENCH_LEG_NAMES
+
+
+def _remove_bench():
+    """Drop bench parts so the GLB and viewer frame only the piano."""
     import bpy
 
-    bpy.ops.object.select_all(action="DESELECT")
-    obj.select_set(True)
-    bpy.context.view_layer.objects.active = obj
-    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    removed = []
+    for obj in list(bpy.data.objects):
+        if _is_bench(obj):
+            removed.append(obj.name)
+            bpy.data.objects.remove(obj, do_unlink=True)
+    if removed:
+        print(f"[export] bench removed: {', '.join(removed)}")
+    return removed
 
 
-def _solidify_bench_cushion(obj):
-    """Swap wavy high-res cushion mesh for a solid box in its bound_box (after scale apply).
-
-    Source cushion carries ~2 m of folded geometry in local Z; baking non-uniform
-    scale leaves 5–7 cm ripples that read as spikes in glTF. The box is fit to
-    ``bound_box`` so the object origin stays put (contrast with a center-origin cube).
-    """
-    import bpy
-    import bmesh
-    from mathutils import Vector
-
-    dapple = bpy.data.materials.get("CW-Plastic-Dapple")
-    dark = bpy.data.materials.get("sy_dark_shiny")
-    if dapple is None or dark is None:
-        return False
-
-    corners = [Vector(c) for c in obj.bound_box]
-    mn = Vector([min(c[i] for c in corners) for i in range(3)])
-    mx = Vector([max(c[i] for c in corners) for i in range(3)])
-    dims = mx - mn
-    if min(dims) < 0.01:
-        return False
-
-    new_mesh = bpy.data.meshes.new("SeatCushionSolid")
-    bm = bmesh.new()
-    bmesh.ops.create_cube(bm, size=1.0)
-    for vert in bm.verts:
-        vert.co.x = mn.x + (vert.co.x + 0.5) * dims.x
-        vert.co.y = mn.y + (vert.co.y + 0.5) * dims.y
-        vert.co.z = mn.z + (vert.co.z + 0.5) * dims.z
-    bm.faces.ensure_lookup_table()
-    new_mesh.materials.append(dapple)
-    new_mesh.materials.append(dark)
-    for face in bm.faces:
-        face.material_index = 0 if face.normal.z > 0.9 else 1
-    bm.to_mesh(new_mesh)
-    bm.free()
-    for poly in new_mesh.polygons:
-        poly.use_smooth = True
-
-    old = obj.data
-    obj.data = new_mesh
-    if old.users == 0:
-        bpy.data.meshes.remove(old)
-    print(
-        f"[export] bench cushion: solid box {dims.x:.2f}x{dims.y:.2f}x{dims.z:.2f} m"
-    )
-    return True
-
-
-def _prepare_bench_export():
-    """One ``Piano_Bench`` object: real meshes, baked scale, web-safe materials.
-
-    Prior attempts replaced the cushion with a centered cube (wrong local origin →
-    bench vanished) or left ``Seat Frame`` scale at 0.13 on an axis (squashed legs).
-    """
+def _remove_bench_legs():
+    """Drop the four bench leg meshes; piano legs and casters stay."""
     import bpy
 
-    parts = []
-    for name in ("Seat Cushion", "Seat Frame"):
-        obj = bpy.data.objects.get(name)
-        if obj is None or obj.type != "MESH":
-            continue
-        for mod in list(obj.modifiers):
-            obj.modifiers.remove(mod)
-        _apply_mesh_transforms(obj)
-        if name == "Seat Cushion":
-            _solidify_bench_cushion(obj)
-        elif hasattr(obj.data, "shade_smooth"):
-            obj.data.shade_smooth()
-        parts.append(obj)
-
-    if not parts:
-        print("[export] bench: no Seat Cushion / Seat Frame found")
-        return False
-
-    if len(parts) == 1:
-        parts[0].name = "Piano_Bench"
-        bench = parts[0]
-    else:
-        bpy.ops.object.select_all(action="DESELECT")
-        for obj in parts:
-            obj.select_set(True)
-        bpy.context.view_layer.objects.active = parts[0]
-        bpy.ops.object.join()
-        bench = bpy.context.active_object
-        bench.name = "Piano_Bench"
-
-    bench["steinway_role"] = "bench"
-    dims = bench.dimensions
-    print(
-        f"[export] bench: {bench.name} {dims.x:.2f}x{dims.y:.2f}x{dims.z:.2f} m, "
-        f"{len(bench.data.polygons)} faces"
-    )
-    return True
+    removed = []
+    for obj in list(bpy.data.objects):
+        if obj.type == "MESH" and _is_bench_leg(obj):
+            removed.append(obj.name)
+            bpy.data.objects.remove(obj, do_unlink=True)
+    if removed:
+        print(f"[export] bench legs removed: {', '.join(removed)}")
+    return removed
 
 
 def _strip_lid_hinge():
@@ -212,7 +139,7 @@ def _join_static():
     for obj in bpy.data.objects:
         if obj.type != "MESH":
             continue
-        if _is_key(obj) or _is_pedal(obj) or _is_bench(obj):
+        if _is_key(obj) or _is_pedal(obj) or _is_bench(obj) or _is_bench_leg(obj):
             continue
         obj.select_set(True)
         targets.append(obj)
@@ -368,10 +295,6 @@ def _rebuild_flat_material(mat, snap):
         norm = nt.nodes.new("ShaderNodeNormalMap")
         nt.links.new(tex.outputs["Color"], norm.inputs["Color"])
         nt.links.new(norm.outputs["Normal"], bsdf.inputs["Normal"])
-    elif "dapple" in mat.name.lower() and "base" in images:
-        # Cushion: export diffuse only. Baking dapple into a glTF normal map reads as
-        # horizontal stripes in Three.js (false keyboard-like ridges).
-        bsdf.inputs["Roughness"].default_value = 0.38
     if snap.get("metallic") is not None:
         bsdf.inputs["Metallic"].default_value = snap["metallic"]
     elif any(k in mat.name.lower() for k in ("gold", "brass", "copper", "steel")):
@@ -416,7 +339,8 @@ def main():
     t0 = time.time()
     _strip_lid_hinge()
     stripped = _strip_scene_props()
-    _prepare_bench_export()
+    _remove_bench()
+    _remove_bench_legs()
     merged = _join_static()
     manifest = _key_manifest()
     with open(manifest_path, "w", encoding="utf-8") as fh:
@@ -445,4 +369,5 @@ def main():
     print("[export] OK")
 
 
-main()
+if __name__ == "__main__":
+    main()

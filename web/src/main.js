@@ -12,7 +12,9 @@ import {
   setupEnvironment,
   setupShadows,
   setupStudioLights,
+  stripBench,
   stripEmbeddedGround,
+  stripBenchLegs,
 } from "./scene-utils.js";
 
 const MODEL_URL = "/models/steinway.glb";
@@ -49,7 +51,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 1.42;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 viewport.appendChild(renderer.domElement);
@@ -217,6 +219,12 @@ async function init() {
 
   const model = gltf.scene;
   stripEmbeddedGround(model);
+  const benchesRemoved = stripBench(model);
+  if (benchesRemoved) console.info(`[viewer] removed ${benchesRemoved} bench object(s)`);
+  const benchLegsRemoved = stripBenchLegs(model);
+  if (benchLegsRemoved) {
+    console.info(`[viewer] removed ${benchLegsRemoved} bench leg object(s)`);
+  }
   scene.add(model);
   frameModel(model);
   refineMaterials(model);

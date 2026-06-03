@@ -34,7 +34,7 @@ export function frameModel(root) {
   };
 }
 
-/** Aim camera and orbit target at the model for a flattering 3/4 view. */
+/** Aim camera and orbit target at the piano for a front 3/4 view of keys and case. */
 export function fitCameraToModel(camera, controls, root) {
   root.updateMatrixWorld(true);
   const box = new THREE.Box3().setFromObject(root);
@@ -42,16 +42,19 @@ export function fitCameraToModel(camera, controls, root) {
   const center = box.getCenter(new THREE.Vector3());
   const radius = Math.max(size.length() * 0.5, 0.6);
 
-  controls.target.copy(center);
-  const offset = new THREE.Vector3(0.62, 0.5, 1.0)
+  const target = center.clone();
+  target.y += size.y * 0.08;
+  controls.target.copy(target);
+
+  const offset = new THREE.Vector3(0.5, 0.34, 0.94)
     .normalize()
-    .multiplyScalar(radius * 1.9);
-  camera.position.copy(center).add(offset);
+    .multiplyScalar(radius * 1.55);
+  camera.position.copy(target).add(offset);
   camera.near = Math.max(0.01, radius / 200);
   camera.far = Math.max(50, radius * 40);
   camera.updateProjectionMatrix();
   controls.update();
-  return { radius, center };
+  return { radius, center: target };
 }
 
 /**
@@ -72,6 +75,56 @@ export function stripEmbeddedGround(root) {
   for (const m of remove) {
     m.parent?.remove(m);
     m.geometry?.dispose();
+  }
+  return remove.length;
+}
+
+const BENCH_NAMES = new Set(["Piano_Bench", "Seat Cushion", "Seat Frame"]);
+
+function isBenchObject(obj) {
+  const name = obj.name || "";
+  if (BENCH_NAMES.has(name)) return true;
+  if (obj.userData?.steinway_role === "bench") return true;
+  if (/bench|seat cushion|seat frame/i.test(name)) return true;
+  if (obj.isMesh && obj.geometry?.name === "SeatCushionSolid") return true;
+  return false;
+}
+
+/** Remove bench objects (export omits them; keeps older GLBs piano-centric). */
+export function stripBench(root) {
+  const remove = [];
+  root.traverse((obj) => {
+    if (isBenchObject(obj)) remove.push(obj);
+  });
+  for (const obj of remove) {
+    obj.parent?.remove(obj);
+    obj.traverse((child) => {
+      if (child.isMesh) child.geometry?.dispose();
+    });
+  }
+  return remove.length;
+}
+
+const BENCH_LEG_NAMES = new Set(["Leg-01", "Leg-02", "Leg-03", "Leg-04"]);
+
+function isBenchLegObject(obj) {
+  const name = obj.name || "";
+  if (BENCH_LEG_NAMES.has(name)) return true;
+  if (obj.userData?.steinway_role === "bench_leg") return true;
+  return /^leg-0[1-4]$/i.test(name);
+}
+
+/** Remove bench leg meshes only (piano legs and casters stay). */
+export function stripBenchLegs(root) {
+  const remove = [];
+  root.traverse((obj) => {
+    if (isBenchLegObject(obj)) remove.push(obj);
+  });
+  for (const obj of remove) {
+    obj.parent?.remove(obj);
+    obj.traverse((child) => {
+      if (child.isMesh) child.geometry?.dispose();
+    });
   }
   return remove.length;
 }
@@ -103,20 +156,9 @@ function lacquerFromExport(mat, { matte, lite }) {
     metalness: 0,
     clearcoat: matte ? (lite ? 0 : 0.12) : lite ? 0.28 : 0.55,
     clearcoatRoughness: matte ? 0.4 : lite ? 0.22 : 0.07,
-    envMapIntensity: 0,
-    specularIntensity: lite ? 0.4 : 0.35,
-    specularColor: new THREE.Color(lite ? 0xffffff : 0x888890),
-  });
-}
-
-/** Bench seat — matte padded vinyl (export uses a flat solid box for the cushion). */
-function dappleCushion(mat) {
-  return new THREE.MeshStandardMaterial({
-    name: mat.name,
-    color: 0x4a4846,
-    roughness: 0.78,
-    metalness: 0,
-    envMapIntensity: 0.08,
+    envMapIntensity: lite ? 0.55 : 0.38,
+    specularIntensity: lite ? 0.55 : 0.5,
+    specularColor: new THREE.Color(lite ? 0xffffff : 0xb8bcc8),
   });
 }
 
@@ -126,7 +168,7 @@ function tuneMetal(mat, fallbackColor, fallbackRough) {
   if (!mat.roughnessMap && typeof mat.roughness !== "number") {
     mat.roughness = fallbackRough;
   }
-  mat.envMapIntensity = 0.85;
+  mat.envMapIntensity = 1.05;
   if (mat.normalMap) mat.normalScale.set(1.1, 1.1);
   if (!mat.map) mat.color = new THREE.Color(fallbackColor);
   return mat;
@@ -164,24 +206,22 @@ export function refineMaterials(root) {
       if (!mat.roughnessMap && typeof mat.roughness !== "number") {
         mat.roughness = 0.55;
       }
-      mat.envMapIntensity = 0.9;
+      mat.envMapIntensity = 1.1;
       if (mat.normalMap) mat.normalScale.set(1.15, 1.15);
       if (!mat.map) mat.color = new THREE.Color(0x7c5a3a);
       next = mat;
-    } else if (/dapple|CW-Plastic/i.test(name)) {
-      next = dappleCushion(mat);
     } else if (/plastic/i.test(name)) {
       prepMaps(mat);
       mat.metalness = 0;
       mat.roughness = mat.roughness ?? 0.5;
-      mat.envMapIntensity = 0.5;
+      mat.envMapIntensity = 0.75;
       if (!mat.map) mat.color = new THREE.Color(0x141416);
       else mat.color.setRGB(1, 1, 1);
       next = mat;
     } else {
       prepMaps(mat);
       if (!mat.map) mat.color = new THREE.Color(0x2a2a2e);
-      mat.envMapIntensity = 0.8;
+      mat.envMapIntensity = 1.0;
       next = mat;
     }
 
@@ -214,27 +254,24 @@ function radialBackground(inner, outer) {
   return tex;
 }
 
-/** Low-key PMREM so metal/wood get subtle reflections without washing black lacquer. */
-function darkStudioEnvironment(pmrem) {
+/** PMREM studio probe — bright enough for wood/metal/lacquer edge detail. */
+function studioEnvironment(pmrem) {
   const envScene = new THREE.Scene();
-  envScene.add(new THREE.AmbientLight(0x202830, 0.4));
-  const soft = new THREE.DirectionalLight(0x788898, 0.5);
+  envScene.add(new THREE.AmbientLight(0x9098a8, 0.75));
+  const soft = new THREE.DirectionalLight(0xc8d0dc, 0.95);
   soft.position.set(2, 4, 3);
   envScene.add(soft);
-  const fill = new THREE.DirectionalLight(0x303840, 0.25);
+  const fill = new THREE.DirectionalLight(0x788898, 0.55);
   fill.position.set(-3, 1, -2);
   envScene.add(fill);
-  return pmrem.fromScene(envScene, 0.06).texture;
+  return pmrem.fromScene(envScene, 0.08).texture;
 }
 
-/**
- * Dark gradient backdrop + low-key IBL. Lacquer (sy_*) ignores env maps;
- * brass/wood use a dim environment so they do not blow out to gray.
- */
+/** Soft gradient backdrop + moderate IBL for readable surface detail. */
 export function setupEnvironment(renderer, scene) {
   const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = darkStudioEnvironment(pmrem);
-  scene.background = radialBackground("#2e3648", "#121820");
+  scene.environment = studioEnvironment(pmrem);
+  scene.background = radialBackground("#5a6678", "#343e4c");
   // Fog was flattening surface detail — keep backdrop gradient only.
   scene.fog = null;
   pmrem.dispose();
@@ -242,18 +279,21 @@ export function setupEnvironment(renderer, scene) {
 }
 
 /**
- * Multi-angle rig so lacquer edges, keys, and bench texture read in the viewport.
+ * Multi-angle rig so lacquer edges and keys read in the viewport.
  * @returns {{ key: THREE.DirectionalLight }}
  */
 export function setupStudioLights(scene) {
-  const hemi = new THREE.HemisphereLight(0x506070, 0x06080c, 0.38);
+  const ambient = new THREE.AmbientLight(0xb8c0cc, 0.32);
+  scene.add(ambient);
+
+  const hemi = new THREE.HemisphereLight(0xa8b4c4, 0x2a323c, 0.58);
   scene.add(hemi);
 
-  const key = new THREE.DirectionalLight(0xfff6ee, 2.1);
+  const key = new THREE.DirectionalLight(0xfff8f0, 2.85);
   key.position.set(3.5, 6, 2.8);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
-  key.shadow.intensity = 0.55;
+  key.shadow.intensity = 0.38;
   key.shadow.camera.near = 0.5;
   key.shadow.camera.far = 18;
   const s = 3.5;
@@ -265,30 +305,30 @@ export function setupStudioLights(scene) {
   key.shadow.normalBias = 0.015;
   scene.add(key);
 
-  const fill = new THREE.DirectionalLight(0xd8d4cc, 0.65);
+  const fill = new THREE.DirectionalLight(0xe8e4dc, 0.95);
   fill.position.set(-2.5, 3.5, 4.5);
   scene.add(fill);
 
-  const rim = new THREE.DirectionalLight(0x90a8c8, 0.42);
+  const rim = new THREE.DirectionalLight(0xa8c0e0, 0.62);
   rim.position.set(-5, 4, -3);
   scene.add(rim);
 
-  const rakeL = new THREE.DirectionalLight(0xc8ccd8, 0.38);
+  const rakeL = new THREE.DirectionalLight(0xd8dce8, 0.52);
   rakeL.position.set(-6, 1.2, 2);
   scene.add(rakeL);
 
   return { key };
 }
 
-/** Dark, subtly reflective studio floor (env-lit sheen — no extra render pass). */
+/** Subtly reflective studio floor (env-lit sheen — no extra render pass). */
 export function createStudioGround(scene) {
   const ground = new THREE.Mesh(
     new THREE.CircleGeometry(40, 96),
     new THREE.MeshStandardMaterial({
-      color: 0x141820,
-      roughness: 0.32,
-      metalness: 0.65,
-      envMapIntensity: 0.9,
+      color: 0x2a323c,
+      roughness: 0.38,
+      metalness: 0.55,
+      envMapIntensity: 1.1,
     }),
   );
   ground.rotation.x = -Math.PI / 2;
