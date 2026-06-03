@@ -89,7 +89,6 @@ function prepMaps(mat) {
 }
 
 function lacquerFromExport(mat, { matte, lite }) {
-  const color = mat.color?.clone() ?? new THREE.Color(lite ? 0xcfc8b8 : 0x000000);
   const roughness =
     typeof mat.roughness === "number"
       ? mat.roughness
@@ -99,39 +98,35 @@ function lacquerFromExport(mat, { matte, lite }) {
           : 1.0
         : 0.1;
   return new THREE.MeshPhysicalMaterial({
-    color,
+    color: new THREE.Color(lite ? 0xcfc8b8 : 0x000000),
     roughness,
     metalness: 0,
-    clearcoat: matte ? (lite ? 0 : 0.2) : lite ? 0.4 : 0.88,
-    clearcoatRoughness: matte ? 0.32 : lite ? 0.2 : 0.04,
-    envMapIntensity: lite ? 0.18 : 0.14,
-    specularIntensity: lite ? 0.65 : 0.85,
-    specularColor: new THREE.Color(lite ? 0xffffff : 0xbbbcc4),
+    clearcoat: matte ? (lite ? 0 : 0.12) : lite ? 0.28 : 0.55,
+    clearcoatRoughness: matte ? 0.4 : lite ? 0.22 : 0.07,
+    envMapIntensity: 0,
+    specularIntensity: lite ? 0.4 : 0.35,
+    specularColor: new THREE.Color(lite ? 0xffffff : 0x888890),
   });
 }
 
-/** Seat Cushion — CW-Plastic-Dapple tile from the .blend (not flat gray plastic). */
+/** Bench seat — CW-Plastic-Dapple diffuse tile only (no faux-normal stripes). */
 function dappleCushion(mat) {
-  const opts = {
+  if (!mat.map) {
+    return new THREE.MeshStandardMaterial({
+      name: mat.name,
+      color: 0x3a3836,
+      roughness: 0.45,
+      metalness: 0,
+    });
+  }
+  const next = new THREE.MeshStandardMaterial({
     name: mat.name,
+    map: mat.map,
     color: new THREE.Color(0xffffff),
-    metalness: 0,
     roughness: typeof mat.roughness === "number" ? mat.roughness : 0.38,
-    envMapIntensity: 0.72,
-  };
-  if (mat.map) {
-    opts.map = mat.map;
-    opts.bumpMap = mat.bumpMap ?? mat.normalMap ?? mat.map;
-    opts.bumpScale = mat.bumpScale > 0 ? mat.bumpScale : 0.22;
-  }
-  if (mat.roughnessMap) opts.roughnessMap = mat.roughnessMap;
-  if (mat.normalMap) {
-    opts.normalMap = mat.normalMap;
-    delete opts.bumpMap;
-    delete opts.bumpScale;
-  }
-  const next = new THREE.MeshStandardMaterial(opts);
-  if (next.normalMap) next.normalScale.set(1.25, 1.25);
+    metalness: 0,
+    envMapIntensity: 0.3,
+  });
   prepMaps(next);
   return next;
 }
@@ -233,14 +228,14 @@ function radialBackground(inner, outer) {
 /** Low-key PMREM so metal/wood get subtle reflections without washing black lacquer. */
 function darkStudioEnvironment(pmrem) {
   const envScene = new THREE.Scene();
-  envScene.add(new THREE.AmbientLight(0x384050, 0.7));
-  const soft = new THREE.DirectionalLight(0xb8c0d0, 1.0);
+  envScene.add(new THREE.AmbientLight(0x202830, 0.4));
+  const soft = new THREE.DirectionalLight(0x788898, 0.5);
   soft.position.set(2, 4, 3);
   envScene.add(soft);
-  const fill = new THREE.DirectionalLight(0x505868, 0.55);
+  const fill = new THREE.DirectionalLight(0x303840, 0.25);
   fill.position.set(-3, 1, -2);
   envScene.add(fill);
-  return pmrem.fromScene(envScene, 0.04).texture;
+  return pmrem.fromScene(envScene, 0.06).texture;
 }
 
 /**
@@ -262,16 +257,14 @@ export function setupEnvironment(renderer, scene) {
  * @returns {{ key: THREE.DirectionalLight }}
  */
 export function setupStudioLights(scene) {
-  scene.add(new THREE.AmbientLight(0x4a5268, 0.32));
-
-  const hemi = new THREE.HemisphereLight(0x8898b8, 0x1a2030, 0.55);
+  const hemi = new THREE.HemisphereLight(0x506070, 0x06080c, 0.38);
   scene.add(hemi);
 
-  const key = new THREE.DirectionalLight(0xfff8f0, 2.6);
+  const key = new THREE.DirectionalLight(0xfff6ee, 2.1);
   key.position.set(3.5, 6, 2.8);
   key.castShadow = true;
   key.shadow.mapSize.set(2048, 2048);
-  key.shadow.intensity = 0.42;
+  key.shadow.intensity = 0.55;
   key.shadow.camera.near = 0.5;
   key.shadow.camera.far = 18;
   const s = 3.5;
@@ -283,26 +276,17 @@ export function setupStudioLights(scene) {
   key.shadow.normalBias = 0.015;
   scene.add(key);
 
-  const fill = new THREE.DirectionalLight(0xe8e4dc, 1.1);
+  const fill = new THREE.DirectionalLight(0xd8d4cc, 0.65);
   fill.position.set(-2.5, 3.5, 4.5);
   scene.add(fill);
 
-  const rim = new THREE.DirectionalLight(0xa8c0e8, 0.75);
+  const rim = new THREE.DirectionalLight(0x90a8c8, 0.42);
   rim.position.set(-5, 4, -3);
   scene.add(rim);
 
-  // Low raking lights pick up lid mouldings, legs, and key sides.
-  const rakeL = new THREE.DirectionalLight(0xd8dce8, 0.55);
+  const rakeL = new THREE.DirectionalLight(0xc8ccd8, 0.38);
   rakeL.position.set(-6, 1.2, 2);
   scene.add(rakeL);
-
-  const rakeR = new THREE.DirectionalLight(0xd0ccc4, 0.45);
-  rakeR.position.set(5, 1.5, 1);
-  scene.add(rakeR);
-
-  const under = new THREE.DirectionalLight(0x9098a8, 0.28);
-  under.position.set(0, 0.5, 5);
-  scene.add(under);
 
   return { key };
 }

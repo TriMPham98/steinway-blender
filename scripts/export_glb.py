@@ -249,16 +249,9 @@ def _rebuild_flat_material(mat, snap):
         norm = nt.nodes.new("ShaderNodeNormalMap")
         nt.links.new(tex.outputs["Color"], norm.inputs["Color"])
         nt.links.new(norm.outputs["Normal"], bsdf.inputs["Normal"])
-    elif "base" in images and "dapple" in mat.name.lower():
-        # Bench cushion: procedural cw-Bump used the same dapple tile in the .blend.
-        tex = nt.nodes.new("ShaderNodeTexImage")
-        tex.image = images["base"]
-        tex.image.colorspace_settings.name = "Non-Color"
-        bump = nt.nodes.new("ShaderNodeBump")
-        bump.inputs["Strength"].default_value = 0.25
-        bump.inputs["Distance"].default_value = 0.02
-        nt.links.new(tex.outputs["Color"], bump.inputs["Height"])
-        nt.links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
+    elif "dapple" in mat.name.lower() and "base" in images:
+        # Cushion: export diffuse only. Baking dapple into a glTF normal map reads as
+        # horizontal stripes in Three.js (false keyboard-like ridges).
         bsdf.inputs["Roughness"].default_value = 0.38
     if snap.get("metallic") is not None:
         bsdf.inputs["Metallic"].default_value = snap["metallic"]
