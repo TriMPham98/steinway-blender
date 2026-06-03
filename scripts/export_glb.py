@@ -63,6 +63,20 @@ def _is_bench(obj):
 
 _BENCH_LEG_NAMES = frozenset({"Leg-01", "Leg-02", "Leg-03", "Leg-04"})
 
+# Lid edge: brass/gold trim and inner wood rim are modeled flush; push trim out and
+# wood back slightly so joined GLB does not z-fight in the web viewer.
+_LID_TRIM_OUTWARD_M = 0.00025  # 0.25 mm along vertex normals
+_LID_WOOD_INWARD_M = 0.00015  # 0.15 mm
+_LID_TRIM_OBJECTS = (
+    "Brass_Sound_Works.001",
+    "Brass_Sound_Works.002",
+    "Long Continuos Hinge TOP",
+    "Long Continuos Hinge BOTTOM",
+    "Long Continous Hinge ROD",
+    "Long Continous Hinge Screws",
+)
+_LID_WOOD_OBJECTS = ("Inside Rim Case",)
+
 
 def _is_bench_leg(obj):
     return obj.name in _BENCH_LEG_NAMES
@@ -129,6 +143,44 @@ def _strip_scene_props():
             removed.append(obj.name)
             bpy.data.objects.remove(obj, do_unlink=True)
     return removed
+
+
+def _push_mesh_along_normals(obj, distance):
+    """Offset mesh vertices along their normals (edit-mode push/pull)."""
+    import bpy
+
+    if obj.type != "MESH" or not obj.data.vertices:
+        return False
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.transform.push_pull(value=distance)
+    bpy.ops.object.mode_set(mode="OBJECT")
+    return True
+
+
+def _fix_lid_trim_zfight():
+    """Separate coplanar lid-edge brass/gold from lacquer and wood before join."""
+    import bpy
+
+    moved = []
+    for name in _LID_TRIM_OBJECTS:
+        obj = bpy.data.objects.get(name)
+        if obj is None:
+            continue
+        if _push_mesh_along_normals(obj, _LID_TRIM_OUTWARD_M):
+            moved.append(name)
+    for name in _LID_WOOD_OBJECTS:
+        obj = bpy.data.objects.get(name)
+        if obj is None:
+            continue
+        if _push_mesh_along_normals(obj, -_LID_WOOD_INWARD_M):
+            moved.append(f"{name} (inset)")
+    if moved:
+        print(f"[export] lid trim z-fight offset: {', '.join(moved)}")
+    return moved
 
 
 def _join_static():
@@ -341,6 +393,7 @@ def main():
     stripped = _strip_scene_props()
     _remove_bench()
     _remove_bench_legs()
+    _fix_lid_trim_zfight()
     merged = _join_static()
     manifest = _key_manifest()
     with open(manifest_path, "w", encoding="utf-8") as fh:

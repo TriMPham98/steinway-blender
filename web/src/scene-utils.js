@@ -224,6 +224,7 @@ function lacquerFromExport(mat, { matte, lite }) {
   });
 }
 
+/** Pull trim metals slightly toward the camera — backup for flush lid-edge geometry. */
 function tuneMetal(mat, fallbackColor, fallbackRough) {
   prepMaps(mat);
   mat.metalness = 1.0;
@@ -242,6 +243,25 @@ function tuneMetal(mat, fallbackColor, fallbackRough) {
     mat.map = null;
   }
   mat.color = new THREE.Color(fallbackColor);
+  mat.polygonOffset = true;
+  mat.polygonOffsetFactor = -2;
+  mat.polygonOffsetUnits = -2;
+  return mat;
+}
+
+function tuneWood(mat) {
+  prepMaps(mat);
+  mat.metalness = 0;
+  if (!mat.roughnessMap && typeof mat.roughness !== "number") {
+    mat.roughness = 0.55;
+  }
+  mat.envMapIntensity = 1.1;
+  if (mat.normalMap) mat.normalScale.set(1.15, 1.15);
+  if (!mat.map) mat.color = new THREE.Color(0x7c5a3a);
+  // Inner rim wood sits under lacquer at the lid edge — nudge behind trim/lacquer.
+  mat.polygonOffset = true;
+  mat.polygonOffsetFactor = 1;
+  mat.polygonOffsetUnits = 1;
   return mat;
 }
 
@@ -272,15 +292,7 @@ export function refineMaterials(root) {
     } else if (/steel|chrome|metal/i.test(name)) {
       next = tuneMetal(mat, 0xc2c6cd, 0.28);
     } else if (/wood|beech|maple/i.test(name)) {
-      prepMaps(mat);
-      mat.metalness = 0;
-      if (!mat.roughnessMap && typeof mat.roughness !== "number") {
-        mat.roughness = 0.55;
-      }
-      mat.envMapIntensity = 1.1;
-      if (mat.normalMap) mat.normalScale.set(1.15, 1.15);
-      if (!mat.map) mat.color = new THREE.Color(0x7c5a3a);
-      next = mat;
+      next = tuneWood(mat);
     } else if (/plastic/i.test(name)) {
       prepMaps(mat);
       mat.metalness = 0;
