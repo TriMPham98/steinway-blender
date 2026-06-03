@@ -42,6 +42,25 @@ export const SEATED_CAMERA_DEFAULTS = {
   exposure: 1.86,
 };
 
+/** Snap-to preset views for the viewer. Tune positions by eye if framing drifts. */
+export const CAMERA_PRESETS = {
+  seated: {
+    position: [...SEATED_CAMERA_DEFAULTS.position],
+    target: [...SEATED_CAMERA_DEFAULTS.target],
+    fov: SEATED_CAMERA_DEFAULTS.fov,
+  },
+  front: {
+    position: [0, 1.05, 2.6],
+    target: [0, 0.7, 0],
+    fov: 42,
+  },
+  top: {
+    position: [0, 3.0, 1.3],
+    target: [0, 0.7, 0],
+    fov: 46,
+  },
+};
+
 /** Seated-player POV — fixed pose after frameModel centers the piano. */
 export function getSeatedCameraPose(root) {
   root.updateMatrixWorld(true);

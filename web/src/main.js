@@ -5,19 +5,18 @@ import { PianoController } from "./piano.js";
 import { LiveSession } from "./live.js";
 import { backendAvailable, findDefaultPort, listInputPorts } from "./midi.js";
 import {
+  CAMERA_PRESETS,
   createStudioGround,
   fitCameraToModel,
   frameModel,
   refineMaterials,
   setupEnvironment,
   setupShadows,
-  getSeatedCameraPose,
   setupSeatedViewerLights,
   stripBench,
   stripEmbeddedGround,
   stripBenchLegs,
 } from "./scene-utils.js";
-import { createCameraDebugPanel } from "./camera-debug.js";
 
 const MODEL_URL = "/models/steinway.glb";
 const MANIFEST_URL = "/models/steinway.keys.json";
@@ -29,12 +28,9 @@ const ui = {
   port: document.getElementById("midi-port"),
   btnStart: document.getElementById("btn-start"),
   btnStop: document.getElementById("btn-stop"),
-  pressAngle: document.getElementById("press-angle"),
-  snappiness: document.getElementById("snappiness"),
-  velocitySens: document.getElementById("velocity-sens"),
-  pressAngleVal: document.getElementById("press-angle-val"),
-  snappinessVal: document.getElementById("snappiness-val"),
-  velocitySensVal: document.getElementById("velocity-sens-val"),
+  viewSeated: document.getElementById("view-seated"),
+  viewFront: document.getElementById("view-front"),
+  viewTop: document.getElementById("view-top"),
 };
 const viewport = document.getElementById("viewport");
 
@@ -71,9 +67,6 @@ controls.maxPolarAngle = Math.PI * 0.49;
 const { syncViewerLight } = setupSeatedViewerLights(scene);
 createStudioGround(scene);
 
-let modelRoot = null;
-let seatedCameraDefaults = null;
-
 const loader = new GLTFLoader();
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
@@ -84,33 +77,57 @@ let midiAccess = null;
 const pointerNotes = new Set();
 let clock = new THREE.Clock();
 
+// Motion-feel settings, hardcoded for the final product (from the model manifest).
+let feelSettings = { pressAngleDeg: 3.5, snappiness: 1, velocitySensitivity: 1 };
+
+// --- Camera tween (shared by the intro sweep and the preset view buttons) ---
+const cameraTween = {
+  active: false,
+  elapsed: 0,
+  duration: 1,
+  fromPos: new THREE.Vector3(),
+  fromTarget: new THREE.Vector3(),
+  fromFov: 44,
+  toPos: new THREE.Vector3(),
+  toTarget: new THREE.Vector3(),
+  toFov: 44,
+};
+
+const easeInOutCubic = (t) =>
+  t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+/** Smoothly fly the camera to a pose ({position,target,fov} arrays or vec3s). */
+function animateCameraTo(pose, duration = 1) {
+  cameraTween.fromPos.copy(camera.position);
+  cameraTween.fromTarget.copy(controls.target);
+  cameraTween.fromFov = camera.fov;
+  cameraTween.toPos.set(...pose.position);
+  cameraTween.toTarget.set(...pose.target);
+  cameraTween.toFov = pose.fov;
+  cameraTween.elapsed = 0;
+  cameraTween.duration = Math.max(duration, 0.0001);
+  cameraTween.active = true;
+  controls.enabled = false;
+}
+
+function updateCameraTween(dt) {
+  if (!cameraTween.active) return;
+  cameraTween.elapsed += dt;
+  const t = easeInOutCubic(
+    Math.min(cameraTween.elapsed / cameraTween.duration, 1),
+  );
+  camera.position.lerpVectors(cameraTween.fromPos, cameraTween.toPos, t);
+  controls.target.lerpVectors(cameraTween.fromTarget, cameraTween.toTarget, t);
+  camera.fov = THREE.MathUtils.lerp(cameraTween.fromFov, cameraTween.toFov, t);
+  camera.updateProjectionMatrix();
+  if (t >= 1) {
+    cameraTween.active = false;
+    controls.enabled = true;
+  }
+}
+
 function setStatus(msg) {
   ui.status.textContent = msg;
-}
-
-function readSettingsFromUi() {
-  return {
-    pressAngleDeg: Number(ui.pressAngle.value),
-    snappiness: Number(ui.snappiness.value),
-    velocitySensitivity: Number(ui.velocitySens.value),
-  };
-}
-
-function syncSettingLabels() {
-  ui.pressAngleVal.textContent = `${Number(ui.pressAngle.value).toFixed(1)}°`;
-  ui.snappinessVal.textContent = Number(ui.snappiness.value).toFixed(1);
-  ui.velocitySensVal.textContent = Number(ui.velocitySens.value).toFixed(1);
-}
-
-function bindSettings() {
-  const onChange = () => {
-    syncSettingLabels();
-    piano?.applySettings(readSettingsFromUi());
-  };
-  ui.pressAngle.addEventListener("input", onChange);
-  ui.snappiness.addEventListener("input", onChange);
-  ui.velocitySens.addEventListener("input", onChange);
-  onChange();
 }
 
 function setTransportRunning(running) {
@@ -224,55 +241,25 @@ async function init() {
 
   const model = gltf.scene;
   stripEmbeddedGround(model);
-  const benchesRemoved = stripBench(model);
-  if (benchesRemoved) console.info(`[viewer] removed ${benchesRemoved} bench object(s)`);
-  const benchLegsRemoved = stripBenchLegs(model);
-  if (benchLegsRemoved) {
-    console.info(`[viewer] removed ${benchLegsRemoved} bench leg object(s)`);
-  }
-  modelRoot = model;
+  stripBench(model);
+  stripBenchLegs(model);
   scene.add(model);
   frameModel(model);
   refineMaterials(model);
   setupShadows(model);
   const pose = fitCameraToModel(camera, controls, model);
   renderer.toneMappingExposure = pose.exposure;
-  seatedCameraDefaults = {
-    position: pose.position.clone(),
-    target: pose.target.clone(),
-    fov: pose.fov,
-    exposure: pose.exposure,
-  };
   syncViewerLight(pose.viewerLightPosition);
 
-  createCameraDebugPanel({
-    camera,
-    controls,
-    renderer,
-    mount: viewport,
-    getDefaults: () =>
-      modelRoot
-        ? (() => {
-            const p = getSeatedCameraPose(modelRoot);
-            return {
-              position: p.position,
-              target: p.target,
-              fov: p.fov,
-              exposure: p.exposure,
-            };
-          })()
-        : seatedCameraDefaults,
-  });
-
-  if (manifest.defaults) {
-    ui.pressAngle.value = String(manifest.defaults.press_angle_deg ?? 3.5);
-    ui.snappiness.value = String(manifest.defaults.snappiness ?? 1);
-    ui.velocitySens.value = String(manifest.defaults.velocity_sensitivity ?? 1);
-  }
+  const defaults = manifest.defaults ?? {};
+  feelSettings = {
+    pressAngleDeg: defaults.press_angle_deg ?? 3.5,
+    snappiness: defaults.snappiness ?? 1,
+    velocitySensitivity: defaults.velocity_sensitivity ?? 1,
+  };
 
   piano = new PianoController(model, manifest);
-  bindSettings();
-  piano.applySettings(readSettingsFromUi());
+  piano.applySettings(feelSettings);
 
   const ready = piano.keyCount;
   if (ready >= 88) {
@@ -286,7 +273,7 @@ async function init() {
   live = new LiveSession(piano, {
     onStatus: setStatus,
     onRunningChange: setTransportRunning,
-    getSettings: readSettingsFromUi,
+    getSettings: () => feelSettings,
   });
 
   setStatus(`Ready — ${ready} keys · click keys or press Start for MIDI`);
@@ -294,10 +281,26 @@ async function init() {
 
   ui.btnStart.addEventListener("click", onStart);
   ui.btnStop.addEventListener("click", onStop);
+  ui.viewSeated.addEventListener("click", () =>
+    animateCameraTo(CAMERA_PRESETS.seated, 1.0),
+  );
+  ui.viewFront.addEventListener("click", () =>
+    animateCameraTo(CAMERA_PRESETS.front, 1.0),
+  );
+  ui.viewTop.addEventListener("click", () =>
+    animateCameraTo(CAMERA_PRESETS.top, 1.0),
+  );
 
   window.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && live?.isRunning) onStop();
   });
+
+  // Cinematic intro: reveal from a wide pose, then settle into the seated view.
+  const start = new THREE.Vector3(...CAMERA_PRESETS.seated.position)
+    .multiplyScalar(1.8)
+    .setY(CAMERA_PRESETS.seated.position[1] + 1.2);
+  camera.position.copy(start);
+  animateCameraTo(CAMERA_PRESETS.seated, 2.2);
 }
 
 renderer.domElement.addEventListener("pointerdown", pointerDown);
@@ -318,6 +321,7 @@ function animate() {
   if (!live?.isRunning) {
     piano?.step(dt);
   }
+  updateCameraTween(dt);
   controls.update();
   syncViewerLight(camera.position);
   renderer.render(scene, camera);
