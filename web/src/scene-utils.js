@@ -206,7 +206,16 @@ function tuneMetal(mat, fallbackColor, fallbackRough) {
   }
   mat.envMapIntensity = 1.05;
   if (mat.normalMap) mat.normalScale.set(1.1, 1.1);
-  if (!mat.map) mat.color = new THREE.Color(fallbackColor);
+  // The materialiq metals export a flat *grayscale* base-color texture; the gold/
+  // brass/copper hue lived in the Blender base-color factor, which glTF dropped
+  // (defaults to white). Used as albedo, that gray map makes the metal mirror the
+  // gray environment and read as chrome. Drop it and apply the metal's own tint so
+  // reflections pick up the right color — normal + roughness/metalness maps stay.
+  if (mat.map) {
+    mat.map.dispose?.();
+    mat.map = null;
+  }
+  mat.color = new THREE.Color(fallbackColor);
   return mat;
 }
 
