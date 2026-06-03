@@ -5,10 +5,17 @@
     $B --background assets/steinway_grand_playable.blend --python scripts/export_glb.py -- \\
         --out web/public/models/steinway.glb
 
-Joins all non-key / non-pedal meshes into a single ``Piano_Static`` object so the
-glTF export finishes in reasonable time (~90 objects instead of ~150). Keys stay
-separate ``Key.NNN`` objects with ``midi_note`` in glTF extras; the sustain pedal
-stays separate with ``steinway_role``.
+Pipeline (source of truth: ``assets/steinway_grand_playable.blend``):
+
+1. Strip scene props (Floor, oversized meshes).
+2. **Bench** — keep real geometry; apply object scale; assign materials; join as
+   ``Piano_Bench`` (never replace with a proxy cube — that breaks origins).
+3. **Body** — join remaining static meshes into ``Piano_Static``.
+4. Flatten materials to fast Principled trees; export GLB. Web viewer refines by
+   material name (``web/src/scene-utils.js``).
+
+Keys stay separate ``Key.NNN`` with ``midi_note``; sustain pedal keeps
+``steinway_role``.
 
 Writes ``steinway.keys.json`` next to the GLB listing note -> node name.
 """
@@ -51,63 +58,17 @@ def _is_pedal(obj):
 
 
 def _is_bench(obj):
-    return obj.name in ("Seat Cushion", "Seat Frame")
+    return obj.name in ("Seat Cushion", "Seat Frame", "Piano_Bench")
 
 
-def _rebuild_bench_cushion_mesh():
-    """Replace the cushion with a smooth box (source mesh is heavily tessellated).
-
-    Even with a planar top, hundreds of shaded triangles + the dapple tile read as
-    sharp quilted peaks in Three.js. A 12-face box matches the bench bounds and
-    shades flat like real upholstery.
-    """
+def _apply_mesh_transforms(obj):
+    """Bake non-uniform object scale into mesh data (glTF scale nodes deform the bench)."""
     import bpy
-    import bmesh
-
-    obj = bpy.data.objects.get("Seat Cushion")
-    dapple = bpy.data.materials.get("CW-Plastic-Dapple")
-    dark = bpy.data.materials.get("sy_dark_shiny")
-    if obj is None or obj.type != "MESH" or dapple is None or dark is None:
-        return False
-
-    for mod in list(obj.modifiers):
-        obj.modifiers.remove(mod)
 
     bpy.ops.object.select_all(action="DESELECT")
     obj.select_set(True)
     bpy.context.view_layer.objects.active = obj
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
-
-    dims = obj.dimensions
-    if min(dims) < 0.01:
-        return False
-
-    new_mesh = bpy.data.meshes.new("SeatCushionBox")
-    bm = bmesh.new()
-    bmesh.ops.create_cube(bm, size=1.0)
-    for vert in bm.verts:
-        vert.co.x *= dims.x
-        vert.co.y *= dims.y
-        vert.co.z *= dims.z
-    bm.faces.ensure_lookup_table()
-    new_mesh.materials.append(dapple)
-    new_mesh.materials.append(dark)
-    for face in bm.faces:
-        face.material_index = 0 if face.normal.z > 0.9 else 1
-    bm.to_mesh(new_mesh)
-    bm.free()
-    for poly in new_mesh.polygons:
-        poly.use_smooth = True
-
-    old = obj.data
-    obj.data = new_mesh
-    if old.users == 0:
-        bpy.data.meshes.remove(old)
-    print(
-        f"[export] bench cushion: smooth box {dims.x:.2f}x{dims.y:.2f}x{dims.z:.2f} "
-        f"({len(new_mesh.polygons)} faces)"
-    )
-    return True
 
 
 def _fix_bench_cushion_materials():
@@ -155,6 +116,53 @@ def _fix_bench_cushion_materials():
     bm.free()
     mesh.update()
     print(f"[export] bench cushion: {top} top (dapple), {side} side (lacquer) faces")
+    return True
+
+
+def _prepare_bench_export():
+    """One ``Piano_Bench`` object: real meshes, baked scale, web-safe materials.
+
+    Prior attempts replaced the cushion with a centered cube (wrong local origin →
+    bench vanished) or left ``Seat Frame`` scale at 0.13 on an axis (squashed legs).
+    """
+    import bpy
+
+    parts = []
+    for name in ("Seat Cushion", "Seat Frame"):
+        obj = bpy.data.objects.get(name)
+        if obj is None or obj.type != "MESH":
+            continue
+        for mod in list(obj.modifiers):
+            obj.modifiers.remove(mod)
+        _apply_mesh_transforms(obj)
+        if hasattr(obj.data, "shade_smooth"):
+            obj.data.shade_smooth()
+        parts.append(obj)
+
+    if not parts:
+        print("[export] bench: no Seat Cushion / Seat Frame found")
+        return False
+
+    _fix_bench_cushion_materials()
+
+    if len(parts) == 1:
+        parts[0].name = "Piano_Bench"
+        bench = parts[0]
+    else:
+        bpy.ops.object.select_all(action="DESELECT")
+        for obj in parts:
+            obj.select_set(True)
+        bpy.context.view_layer.objects.active = parts[0]
+        bpy.ops.object.join()
+        bench = bpy.context.active_object
+        bench.name = "Piano_Bench"
+
+    bench["steinway_role"] = "bench"
+    dims = bench.dimensions
+    print(
+        f"[export] bench: {bench.name} {dims.x:.2f}x{dims.y:.2f}x{dims.z:.2f} m, "
+        f"{len(bench.data.polygons)} faces"
+    )
     return True
 
 
@@ -405,7 +413,7 @@ def main():
     t0 = time.time()
     _strip_lid_hinge()
     stripped = _strip_scene_props()
-    _rebuild_bench_cushion_mesh()
+    _prepare_bench_export()
     merged = _join_static()
     manifest = _key_manifest()
     with open(manifest_path, "w", encoding="utf-8") as fh:
