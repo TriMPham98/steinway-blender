@@ -86,6 +86,9 @@ let piano = null;
 let live = null;
 /** @type {MIDIAccess | null} */
 let midiAccess = null;
+/** After intro; auto-start live MIDI when an input is available. */
+let allowMidiAutoConnect = false;
+let prevMidiPortCount = 0;
 const pointerNotes = new Set();
 let clock = new THREE.Clock();
 
@@ -271,6 +274,33 @@ function fillPortList(names, selected) {
   ui.port.value = pick;
 }
 
+function maybeAutoConnectMidi() {
+  if (!allowMidiAutoConnect || !midiAccess || !piano) return;
+  const names = listInputPorts(midiAccess);
+  if (!names.length) {
+    if (live?.isRunning) onStop();
+    return;
+  }
+  if (live?.isRunning) return;
+  if (!ui.port.value) return;
+  onStart();
+}
+
+function refreshMidiPorts() {
+  if (!midiAccess) return;
+  const names = listInputPorts(midiAccess);
+  const count = names.length;
+  const hotPlug = prevMidiPortCount === 0 && count > 0;
+  prevMidiPortCount = count;
+  fillPortList(names, ui.port.value);
+  ui.btnStart.disabled = count === 0 || (live?.isRunning ?? false);
+  if (!count) {
+    if (live?.isRunning) onStop();
+    return;
+  }
+  if (hotPlug) maybeAutoConnectMidi();
+}
+
 async function setupMidi() {
   if (!backendAvailable()) {
     setStatus("Web MIDI not supported in this browser");
@@ -279,13 +309,8 @@ async function setupMidi() {
   }
   try {
     midiAccess = await navigator.requestMIDIAccess({ sysex: false });
-    const refresh = () => {
-      const names = listInputPorts(midiAccess);
-      fillPortList(names, ui.port.value);
-      ui.btnStart.disabled = names.length === 0 || (live?.isRunning ?? false);
-    };
-    refresh();
-    midiAccess.onstatechange = refresh;
+    refreshMidiPorts();
+    midiAccess.onstatechange = refreshMidiPorts;
   } catch {
     setStatus("Web MIDI permission denied");
     ui.btnStart.disabled = true;
@@ -449,6 +474,10 @@ async function init() {
     .setY(CAMERA_PRESETS.hero.position[1] + 1.2);
   camera.position.copy(start);
   goToViewPreset("hero", 2.2);
+  setTimeout(() => {
+    allowMidiAutoConnect = true;
+    maybeAutoConnectMidi();
+  }, 2300);
 }
 
 bindViewPresetClearOnUserInput();
