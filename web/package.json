@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "node scripts/fetch-model.mjs && vite build",
     "preview": "vite preview",
     "package": "npm run build && node scripts/package-release.mjs",
     "favicon": "node scripts/generate-favicon.mjs"
