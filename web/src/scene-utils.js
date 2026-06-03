@@ -109,30 +109,15 @@ function lacquerFromExport(mat, { matte, lite }) {
   });
 }
 
-/** Bench seat — CW-Plastic-Dapple diffuse tile only (no faux-normal stripes). */
+/** Bench seat — matte vinyl (dapple tile + faceted mesh read as spiky quilt in WebGL). */
 function dappleCushion(mat) {
-  if (!mat.map) {
-    return new THREE.MeshStandardMaterial({
-      name: mat.name,
-      color: 0x3a3836,
-      roughness: 0.45,
-      metalness: 0,
-    });
-  }
-  const map = mat.map.clone();
-  map.wrapS = map.wrapT = THREE.RepeatWrapping;
-  map.repeat.set(2.2, 2.2);
-  const next = new THREE.MeshStandardMaterial({
+  return new THREE.MeshStandardMaterial({
     name: mat.name,
-    map,
-    color: new THREE.Color(0xffffff),
-    roughness: typeof mat.roughness === "number" ? mat.roughness : 0.48,
+    color: 0x4a4744,
+    roughness: 0.68,
     metalness: 0,
-    envMapIntensity: 0.3,
-    flatShading: false,
+    envMapIntensity: 0.12,
   });
-  prepMaps(next);
-  return next;
 }
 
 function tuneMetal(mat, fallbackColor, fallbackRough) {

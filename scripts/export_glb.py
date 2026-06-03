@@ -54,39 +54,59 @@ def _is_bench(obj):
     return obj.name in ("Seat Cushion", "Seat Frame")
 
 
-def _flatten_bench_cushion_top():
-    """Planarize the seat top for glTF — base mesh + subsurf reads as spiky peaks."""
+def _rebuild_bench_cushion_mesh():
+    """Replace the cushion with a smooth box (source mesh is heavily tessellated).
+
+    Even with a planar top, hundreds of shaded triangles + the dapple tile read as
+    sharp quilted peaks in Three.js. A 12-face box matches the bench bounds and
+    shades flat like real upholstery.
+    """
     import bpy
     import bmesh
 
     obj = bpy.data.objects.get("Seat Cushion")
-    if obj is None or obj.type != "MESH":
+    dapple = bpy.data.materials.get("CW-Plastic-Dapple")
+    dark = bpy.data.materials.get("sy_dark_shiny")
+    if obj is None or obj.type != "MESH" or dapple is None or dark is None:
         return False
 
     for mod in list(obj.modifiers):
         obj.modifiers.remove(mod)
 
-    mesh = obj.data
-    bm = bmesh.new()
-    bm.from_mesh(mesh)
-    bm.faces.ensure_lookup_table()
-    top_verts = set()
-    for face in bm.faces:
-        if face.normal.z > 0.85:
-            for vert in face.verts:
-                top_verts.add(vert)
-    if not top_verts:
-        bm.free()
+    bpy.ops.object.select_all(action="DESELECT")
+    obj.select_set(True)
+    bpy.context.view_layer.objects.active = obj
+    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+
+    dims = obj.dimensions
+    if min(dims) < 0.01:
         return False
 
-    z_flat = max(vert.co.z for vert in top_verts)
-    for vert in top_verts:
-        vert.co.z = z_flat
-
-    bm.to_mesh(mesh)
+    new_mesh = bpy.data.meshes.new("SeatCushionBox")
+    bm = bmesh.new()
+    bmesh.ops.create_cube(bm, size=1.0)
+    for vert in bm.verts:
+        vert.co.x *= dims.x
+        vert.co.y *= dims.y
+        vert.co.z *= dims.z
+    bm.faces.ensure_lookup_table()
+    new_mesh.materials.append(dapple)
+    new_mesh.materials.append(dark)
+    for face in bm.faces:
+        face.material_index = 0 if face.normal.z > 0.9 else 1
+    bm.to_mesh(new_mesh)
     bm.free()
-    mesh.update()
-    print(f"[export] bench cushion: flattened top to z={z_flat:.4f} ({len(top_verts)} verts)")
+    for poly in new_mesh.polygons:
+        poly.use_smooth = True
+
+    old = obj.data
+    obj.data = new_mesh
+    if old.users == 0:
+        bpy.data.meshes.remove(old)
+    print(
+        f"[export] bench cushion: smooth box {dims.x:.2f}x{dims.y:.2f}x{dims.z:.2f} "
+        f"({len(new_mesh.polygons)} faces)"
+    )
     return True
 
 
@@ -385,8 +405,7 @@ def main():
     t0 = time.time()
     _strip_lid_hinge()
     stripped = _strip_scene_props()
-    _fix_bench_cushion_materials()
-    _flatten_bench_cushion_top()
+    _rebuild_bench_cushion_mesh()
     merged = _join_static()
     manifest = _key_manifest()
     with open(manifest_path, "w", encoding="utf-8") as fh:
