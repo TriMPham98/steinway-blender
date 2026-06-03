@@ -102,11 +102,11 @@ function lacquerFromExport(mat, { matte, lite }) {
     color,
     roughness,
     metalness: 0,
-    clearcoat: matte ? (lite ? 0 : 0.15) : lite ? 0.3 : 0.75,
-    clearcoatRoughness: matte ? 0.38 : lite ? 0.26 : 0.06,
-    envMapIntensity: lite ? 0.14 : 0.1,
-    specularIntensity: lite ? 0.45 : 0.55,
-    specularColor: new THREE.Color(lite ? 0xffffff : 0x9999a0),
+    clearcoat: matte ? (lite ? 0 : 0.2) : lite ? 0.4 : 0.88,
+    clearcoatRoughness: matte ? 0.32 : lite ? 0.2 : 0.04,
+    envMapIntensity: lite ? 0.18 : 0.14,
+    specularIntensity: lite ? 0.65 : 0.85,
+    specularColor: new THREE.Color(lite ? 0xffffff : 0xbbbcc4),
   });
 }
 
@@ -122,7 +122,7 @@ function dappleCushion(mat) {
   if (mat.map) {
     opts.map = mat.map;
     opts.bumpMap = mat.bumpMap ?? mat.normalMap ?? mat.map;
-    opts.bumpScale = mat.bumpScale > 0 ? mat.bumpScale : 0.14;
+    opts.bumpScale = mat.bumpScale > 0 ? mat.bumpScale : 0.22;
   }
   if (mat.roughnessMap) opts.roughnessMap = mat.roughnessMap;
   if (mat.normalMap) {
@@ -131,6 +131,7 @@ function dappleCushion(mat) {
     delete opts.bumpScale;
   }
   const next = new THREE.MeshStandardMaterial(opts);
+  if (next.normalMap) next.normalScale.set(1.25, 1.25);
   prepMaps(next);
   return next;
 }
@@ -141,7 +142,8 @@ function tuneMetal(mat, fallbackColor, fallbackRough) {
   if (!mat.roughnessMap && typeof mat.roughness !== "number") {
     mat.roughness = fallbackRough;
   }
-  mat.envMapIntensity = 0.65;
+  mat.envMapIntensity = 0.85;
+  if (mat.normalMap) mat.normalScale.set(1.1, 1.1);
   if (!mat.map) mat.color = new THREE.Color(fallbackColor);
   return mat;
 }
@@ -178,7 +180,8 @@ export function refineMaterials(root) {
       if (!mat.roughnessMap && typeof mat.roughness !== "number") {
         mat.roughness = 0.55;
       }
-      mat.envMapIntensity = 0.75;
+      mat.envMapIntensity = 0.9;
+      if (mat.normalMap) mat.normalScale.set(1.15, 1.15);
       if (!mat.map) mat.color = new THREE.Color(0x7c5a3a);
       next = mat;
     } else if (/dapple|CW-Plastic/i.test(name)) {
@@ -230,14 +233,14 @@ function radialBackground(inner, outer) {
 /** Low-key PMREM so metal/wood get subtle reflections without washing black lacquer. */
 function darkStudioEnvironment(pmrem) {
   const envScene = new THREE.Scene();
-  envScene.add(new THREE.AmbientLight(0x282e3a, 0.55));
-  const soft = new THREE.DirectionalLight(0xa8b0c0, 0.85);
+  envScene.add(new THREE.AmbientLight(0x384050, 0.7));
+  const soft = new THREE.DirectionalLight(0xb8c0d0, 1.0);
   soft.position.set(2, 4, 3);
   envScene.add(soft);
-  const fill = new THREE.DirectionalLight(0x404858, 0.45);
+  const fill = new THREE.DirectionalLight(0x505868, 0.55);
   fill.position.set(-3, 1, -2);
   envScene.add(fill);
-  return pmrem.fromScene(envScene, 0.05).texture;
+  return pmrem.fromScene(envScene, 0.04).texture;
 }
 
 /**
@@ -247,10 +250,61 @@ function darkStudioEnvironment(pmrem) {
 export function setupEnvironment(renderer, scene) {
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = darkStudioEnvironment(pmrem);
-  scene.background = radialBackground("#242a38", "#0c1018");
-  scene.fog = new THREE.Fog(0x0c1018, 11, 32);
+  scene.background = radialBackground("#2e3648", "#121820");
+  // Fog was flattening surface detail — keep backdrop gradient only.
+  scene.fog = null;
   pmrem.dispose();
   return scene.environment;
+}
+
+/**
+ * Multi-angle rig so lacquer edges, keys, and bench texture read in the viewport.
+ * @returns {{ key: THREE.DirectionalLight }}
+ */
+export function setupStudioLights(scene) {
+  scene.add(new THREE.AmbientLight(0x4a5268, 0.32));
+
+  const hemi = new THREE.HemisphereLight(0x8898b8, 0x1a2030, 0.55);
+  scene.add(hemi);
+
+  const key = new THREE.DirectionalLight(0xfff8f0, 2.6);
+  key.position.set(3.5, 6, 2.8);
+  key.castShadow = true;
+  key.shadow.mapSize.set(2048, 2048);
+  key.shadow.intensity = 0.42;
+  key.shadow.camera.near = 0.5;
+  key.shadow.camera.far = 18;
+  const s = 3.5;
+  key.shadow.camera.left = -s;
+  key.shadow.camera.right = s;
+  key.shadow.camera.top = s;
+  key.shadow.camera.bottom = -s;
+  key.shadow.bias = -0.0003;
+  key.shadow.normalBias = 0.015;
+  scene.add(key);
+
+  const fill = new THREE.DirectionalLight(0xe8e4dc, 1.1);
+  fill.position.set(-2.5, 3.5, 4.5);
+  scene.add(fill);
+
+  const rim = new THREE.DirectionalLight(0xa8c0e8, 0.75);
+  rim.position.set(-5, 4, -3);
+  scene.add(rim);
+
+  // Low raking lights pick up lid mouldings, legs, and key sides.
+  const rakeL = new THREE.DirectionalLight(0xd8dce8, 0.55);
+  rakeL.position.set(-6, 1.2, 2);
+  scene.add(rakeL);
+
+  const rakeR = new THREE.DirectionalLight(0xd0ccc4, 0.45);
+  rakeR.position.set(5, 1.5, 1);
+  scene.add(rakeR);
+
+  const under = new THREE.DirectionalLight(0x9098a8, 0.28);
+  under.position.set(0, 0.5, 5);
+  scene.add(under);
+
+  return { key };
 }
 
 /** Dark, subtly reflective studio floor (env-lit sheen — no extra render pass). */
