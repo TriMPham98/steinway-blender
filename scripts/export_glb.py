@@ -54,6 +54,42 @@ def _is_bench(obj):
     return obj.name in ("Seat Cushion", "Seat Frame")
 
 
+def _flatten_bench_cushion_top():
+    """Planarize the seat top for glTF — base mesh + subsurf reads as spiky peaks."""
+    import bpy
+    import bmesh
+
+    obj = bpy.data.objects.get("Seat Cushion")
+    if obj is None or obj.type != "MESH":
+        return False
+
+    for mod in list(obj.modifiers):
+        obj.modifiers.remove(mod)
+
+    mesh = obj.data
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+    bm.faces.ensure_lookup_table()
+    top_verts = set()
+    for face in bm.faces:
+        if face.normal.z > 0.85:
+            for vert in face.verts:
+                top_verts.add(vert)
+    if not top_verts:
+        bm.free()
+        return False
+
+    z_flat = max(vert.co.z for vert in top_verts)
+    for vert in top_verts:
+        vert.co.z = z_flat
+
+    bm.to_mesh(mesh)
+    bm.free()
+    mesh.update()
+    print(f"[export] bench cushion: flattened top to z={z_flat:.4f} ({len(top_verts)} verts)")
+    return True
+
+
 def _fix_bench_cushion_materials():
     """Dapple only on the top face; sides get sy_dark_shiny like the frame.
 
@@ -350,6 +386,7 @@ def main():
     _strip_lid_hinge()
     stripped = _strip_scene_props()
     _fix_bench_cushion_materials()
+    _flatten_bench_cushion_top()
     merged = _join_static()
     manifest = _key_manifest()
     with open(manifest_path, "w", encoding="utf-8") as fh:
