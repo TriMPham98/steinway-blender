@@ -16,6 +16,8 @@ export class LiveSession {
     this.piano = piano;
     this.hooks = hooks;
     this.running = false;
+    /** @type {string | null} */
+    this.portName = null;
     /** @type {MIDIAccess | null} */
     this.access = null;
     /** @type {MIDIInput | null} */
@@ -41,6 +43,7 @@ export class LiveSession {
     }
     this.access = access;
     this.input = input;
+    this.portName = portName;
     input.onmidimessage = this._boundMidi;
     this.running = true;
     this._lastT = performance.now() / 1000;
@@ -55,6 +58,7 @@ export class LiveSession {
       this.input.onmidimessage = null;
       this.input = null;
     }
+    this.portName = null;
     this.running = false;
     cancelAnimationFrame(this._raf);
     this._raf = 0;

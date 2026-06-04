@@ -299,6 +299,10 @@ function refreshMidiPorts() {
     if (live?.isRunning) onStop();
     return;
   }
+  if (live?.isRunning && live.portName && !names.includes(live.portName)) {
+    onStop();
+    return;
+  }
   if (hotPlug) maybeAutoConnectMidi();
 }
 
@@ -335,8 +339,10 @@ function onStart() {
 }
 
 function onStop() {
+  const wasRunning = live?.isRunning;
   live?.stop();
   setTransportRunning(false);
+  if (wasRunning) goToViewPreset("hero");
 }
 
 function pointerDown(event) {
