@@ -116,32 +116,29 @@ const KEYBOARD_NOTE_OFFSETS = {
 };
 const KEYBOARD_BASE_NOTE = 60; // C4, before octave shift
 const KEYBOARD_SPAN = 19; // semitones from the base key (A) to the top key (Enter)
-// Clamp the window's base so it always sits fully on the 88-key piano: the
-// lowest shift reaches A0 (base = 21) and the highest puts C8 on the top key
-// (base + span = 108), with no dead keys at the extremes.
-const KEYBOARD_BASE_MIN = MIDI_LOW; // 21 (A0)
-const KEYBOARD_BASE_MAX = MIDI_HIGH - KEYBOARD_SPAN; // 92 → top key lands on C8
-const OCTAVE_SHIFT_MIN = -4; // far enough down that the base clamps onto A0
-const OCTAVE_SHIFT_MAX = 3; //  far enough up that the top key clamps onto C8
+// Octave shifts move the whole window by a true octave (12 semitones), so a given
+// letter key always plays the same pitch class. At the extremes the window runs
+// off the 88-key piano and those keys go silent — A0 and C8 stay reachable, just
+// not on the A key.
+const OCTAVE_SHIFT_MIN = -4; // base C0 → H = A0 (A–G fall below the piano)
+const OCTAVE_SHIFT_MAX = 3; //  base C7 → A = C7, K = C8 (keys above C8 go silent)
 
 const NOTE_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
 function noteName(midi) {
   return NOTE_NAMES[((midi % 12) + 12) % 12] + (Math.floor(midi / 12) - 1);
 }
 
-/** Window base note for the current octave shift, clamped to stay on-piano. */
+/** Window base note (the A key) for the current octave shift — true octaves. */
 function keyboardBaseNote() {
-  return THREE.MathUtils.clamp(
-    KEYBOARD_BASE_NOTE + kbOctaveShift * 12,
-    KEYBOARD_BASE_MIN,
-    KEYBOARD_BASE_MAX,
-  );
+  return KEYBOARD_BASE_NOTE + kbOctaveShift * 12;
 }
 
 function computerKeyToNote(code) {
   const offset = KEYBOARD_NOTE_OFFSETS[code];
   if (offset == null) return null;
-  return keyboardBaseNote() + offset; // base clamp keeps this within [21, 108]
+  const note = keyboardBaseNote() + offset;
+  // Keys that run off either end of the piano at the extreme octaves are silent.
+  return note >= MIDI_LOW && note <= MIDI_HIGH ? note : null;
 }
 
 /** Warm up the sampled grand for click/keyboard play when no MIDI is driving sound. */
@@ -237,10 +234,13 @@ const KB_VIEW_OFFSET = new THREE.Vector3(
 const KB_VIEW_DIST = KB_VIEW_OFFSET.length();
 const KB_VIEW_DIR = KB_VIEW_OFFSET.clone().normalize();
 
-/** Inclusive MIDI [lo, hi] the computer keyboard currently maps to. */
+/** Inclusive MIDI [lo, hi] of the *playable* keys (clamped to the piano). */
 function keyboardRangeNotes() {
   const base = keyboardBaseNote();
-  return [base, base + KEYBOARD_SPAN];
+  return [
+    Math.max(base, MIDI_LOW),
+    Math.min(base + KEYBOARD_SPAN, MIDI_HIGH),
+  ];
 }
 
 /** Bounding-box center of the home (C4–E5) range, cached after the model loads. */
