@@ -3,6 +3,8 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { PianoController } from "./piano.js";
 import { LiveSession } from "./live.js";
+import { PianoAudio } from "./audio.js";
+import { MIDI_HIGH, MIDI_LOW } from "./anim.js";
 import { backendAvailable, findDefaultPort, listInputPorts } from "./midi.js";
 import { createSceneDebugPanel } from "./scene-debug.js";
 import {
@@ -91,7 +93,36 @@ let midiAccess = null;
 let allowMidiAutoConnect = false;
 let prevMidiPortCount = 0;
 const pointerNotes = new Set();
+// Sampled-grand sound engine for the no-MIDI play path (silent during live
+// MIDI, where the hardware piano makes its own sound).
+const audio = new PianoAudio();
+let spaceSustainHeld = false;
+let kbOctaveShift = 0;
+/** event.code -> MIDI note currently sounding for that physical key. */
+const kbHeldNotes = new Map();
 let clock = new THREE.Clock();
+
+// Computer-keyboard "musical typing" layout: physical keys (event.code) so it
+// works on any layout. Home row = white keys from C4, upper row = the sharps;
+// Z/X shift the octave. Lets visitors without a MIDI piano actually play.
+const KEYBOARD_NOTE_OFFSETS = {
+  KeyA: 0, KeyW: 1, KeyS: 2, KeyE: 3, KeyD: 4, KeyF: 5, KeyT: 6,
+  KeyG: 7, KeyY: 8, KeyH: 9, KeyU: 10, KeyJ: 11, KeyK: 12,
+  KeyO: 13, KeyL: 14, KeyP: 15, Semicolon: 16,
+};
+const KEYBOARD_BASE_NOTE = 60; // C4
+
+function computerKeyToNote(code) {
+  const offset = KEYBOARD_NOTE_OFFSETS[code];
+  if (offset == null) return null;
+  const note = KEYBOARD_BASE_NOTE + offset + kbOctaveShift * 12;
+  return note >= MIDI_LOW && note <= MIDI_HIGH ? note : null;
+}
+
+/** Warm up the sampled grand for click/keyboard play when no MIDI is driving sound. */
+function preloadAudioIfLocal() {
+  if (PianoAudio.supported() && !live?.isRunning) audio.init();
+}
 
 // Motion-feel settings, hardcoded for the final product (from the model manifest).
 let feelSettings = { pressAngleDeg: 3.5, snappiness: 1, velocitySensitivity: 1 };
@@ -297,6 +328,7 @@ function refreshMidiPorts() {
   ui.btnStart.disabled = count === 0 || (live?.isRunning ?? false);
   if (!count) {
     if (live?.isRunning) onStop();
+    else preloadAudioIfLocal();
     return;
   }
   if (live?.isRunning && live.portName && !names.includes(live.portName)) {
@@ -331,6 +363,9 @@ function onStart() {
   }
   try {
     live.start(midiAccess, port);
+    // The hardware piano makes the sound now — silence any local web-audio play.
+    releaseAllLocalNotes();
+    audio.allOff();
     setTransportRunning(true);
     goToViewPreset("seated");
   } catch (err) {
@@ -343,6 +378,38 @@ function onStop() {
   live?.stop();
   setTransportRunning(false);
   if (wasRunning) goToViewPreset("hero");
+  preloadAudioIfLocal();
+}
+
+// --- Local (no-MIDI) play: drive the visual keys and the sampled-grand sound
+// together. Callers gate on `!live.isRunning`, so audio never doubles the
+// hardware piano during a live MIDI session. ---
+function localNoteOn(note, velocity) {
+  piano?.noteOn(note, velocity);
+  audio.resume();
+  audio.noteOn(note, velocity);
+}
+
+function localNoteOff(note) {
+  piano?.noteOff(note);
+  audio.noteOff(note);
+}
+
+function setLocalSustain(on) {
+  piano?.setSustain(on);
+  audio.setSustain(on);
+}
+
+/** Release every locally-held note + pedal (e.g. when a live MIDI session starts). */
+function releaseAllLocalNotes() {
+  for (const note of pointerNotes) localNoteOff(note);
+  pointerNotes.clear();
+  for (const note of kbHeldNotes.values()) localNoteOff(note);
+  kbHeldNotes.clear();
+  if (spaceSustainHeld) {
+    spaceSustainHeld = false;
+    setLocalSustain(false);
+  }
 }
 
 function pointerDown(event) {
@@ -353,13 +420,13 @@ function pointerDown(event) {
   raycaster.setFromCamera(pointer, camera);
   const note = piano.pick(raycaster);
   if (note == null) return;
-  piano.noteOn(note, 100);
+  localNoteOn(note, 100);
   pointerNotes.add(note);
 }
 
 function pointerUp() {
-  if (live?.isRunning) return;
-  for (const note of pointerNotes) piano?.noteOff(note);
+  if (!pointerNotes.size) return;
+  for (const note of pointerNotes) localNoteOff(note);
   pointerNotes.clear();
 }
 
@@ -449,6 +516,12 @@ async function init() {
   } else {
     setStatus(`Keys missing (${ready}/88) — re-export model`);
   }
+
+  // Once the sampled grand is loaded, nudge no-MIDI visitors to play.
+  audio.onLoaded = () => {
+    if (!live?.isRunning) setStatus("No MIDI — play with your mouse or keyboard");
+  };
+
   await setupMidi();
 
   ui.btnStart.addEventListener("click", onStart);
@@ -471,9 +544,63 @@ async function init() {
       return;
     }
 
-    if (e.key !== "Escape") return;
-    if (ui.drawer.classList.contains("open")) closeDrawer();
-    else if (live?.isRunning) onStop();
+    if (e.key === "Escape") {
+      if (ui.drawer.classList.contains("open")) closeDrawer();
+      else if (live?.isRunning) onStop();
+      return;
+    }
+
+    // Computer-keyboard piano — only when the hardware piano isn't driving the
+    // sound, and never hijacking browser/OS shortcuts.
+    if (live?.isRunning || e.metaKey || e.ctrlKey || e.altKey) return;
+
+    if (e.code === "Space") {
+      e.preventDefault();
+      if (!spaceSustainHeld) {
+        spaceSustainHeld = true;
+        audio.resume();
+        setLocalSustain(true);
+      }
+      return;
+    }
+
+    if (e.code === "KeyZ" || e.code === "KeyX") {
+      if (!e.repeat) {
+        kbOctaveShift = Math.max(
+          -3,
+          Math.min(3, kbOctaveShift + (e.code === "KeyZ" ? -1 : 1)),
+        );
+        setStatus(
+          kbOctaveShift === 0
+            ? "Octave: middle"
+            : `Octave ${kbOctaveShift > 0 ? "+" : ""}${kbOctaveShift}`,
+        );
+      }
+      return;
+    }
+
+    const note = computerKeyToNote(e.code);
+    if (note == null) return;
+    e.preventDefault();
+    if (e.repeat || kbHeldNotes.has(e.code)) return;
+    kbHeldNotes.set(e.code, note);
+    localNoteOn(note, 96);
+  });
+
+  window.addEventListener("keyup", (e) => {
+    if (e.code === "Space") {
+      if (spaceSustainHeld) {
+        spaceSustainHeld = false;
+        setLocalSustain(false);
+      }
+      return;
+    }
+    // Release by physical key (not note) so an octave shift mid-hold still lifts
+    // the note that was actually struck.
+    const note = kbHeldNotes.get(e.code);
+    if (note == null) return;
+    kbHeldNotes.delete(e.code);
+    localNoteOff(note);
   });
 
   // Cinematic intro: reveal from a wide pose, then settle into the hero view.
@@ -485,6 +612,7 @@ async function init() {
   setTimeout(() => {
     allowMidiAutoConnect = true;
     maybeAutoConnectMidi();
+    preloadAudioIfLocal();
   }, 2300);
 }
 

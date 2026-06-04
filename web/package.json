@@ -11,6 +11,7 @@
     "favicon": "node scripts/generate-favicon.mjs"
   },
   "dependencies": {
+    "smplr": "^0.26.0",
     "three": "^0.176.0"
   },
   "devDependencies": {
