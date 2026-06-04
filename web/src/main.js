@@ -69,7 +69,9 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(...HERO_CAMERA_DEFAULTS.target);
 controls.enableDamping = true;
 controls.dampingFactor = 0.06;
-controls.minDistance = 1.0;
+// Low enough that the close keyboard-range framing isn't clamped back out by
+// controls.update() (which always re-enforces minDistance on the orbit radius).
+controls.minDistance = 0.3;
 controls.maxDistance = 12;
 controls.maxPolarAngle = Math.PI * 0.49;
 
@@ -110,13 +112,34 @@ const KEYBOARD_NOTE_OFFSETS = {
   KeyG: 7, KeyY: 8, KeyH: 9, KeyU: 10, KeyJ: 11, KeyK: 12,
   KeyO: 13, KeyL: 14, KeyP: 15, Semicolon: 16,
 };
-const KEYBOARD_BASE_NOTE = 60; // C4
+const KEYBOARD_BASE_NOTE = 60; // C4, before octave shift
+const KEYBOARD_SPAN = 16; // semitones from the base key (A) to the top key (;)
+// Clamp the window's base so it always sits fully on the 88-key piano: the
+// lowest shift reaches A0 (base = 21) and the highest puts C8 on the top key
+// (base + span = 108), with no dead keys at the extremes.
+const KEYBOARD_BASE_MIN = MIDI_LOW; // 21 (A0)
+const KEYBOARD_BASE_MAX = MIDI_HIGH - KEYBOARD_SPAN; // 92 → top key lands on C8
+const OCTAVE_SHIFT_MIN = -4; // far enough down that the base clamps onto A0
+const OCTAVE_SHIFT_MAX = 3; //  far enough up that the top key clamps onto C8
+
+const NOTE_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+function noteName(midi) {
+  return NOTE_NAMES[((midi % 12) + 12) % 12] + (Math.floor(midi / 12) - 1);
+}
+
+/** Window base note for the current octave shift, clamped to stay on-piano. */
+function keyboardBaseNote() {
+  return THREE.MathUtils.clamp(
+    KEYBOARD_BASE_NOTE + kbOctaveShift * 12,
+    KEYBOARD_BASE_MIN,
+    KEYBOARD_BASE_MAX,
+  );
+}
 
 function computerKeyToNote(code) {
   const offset = KEYBOARD_NOTE_OFFSETS[code];
   if (offset == null) return null;
-  const note = KEYBOARD_BASE_NOTE + offset + kbOctaveShift * 12;
-  return note >= MIDI_LOW && note <= MIDI_HIGH ? note : null;
+  return keyboardBaseNote() + offset; // base clamp keeps this within [21, 108]
 }
 
 /** Warm up the sampled grand for click/keyboard play when no MIDI is driving sound. */
@@ -190,21 +213,90 @@ function isEditableFocusTarget(el) {
 }
 
 function goToViewPreset(id, duration = 1.0) {
+  viewingKeyboardRange = false;
   setActiveViewPreset(id);
   animateCameraTo(CAMERA_PRESETS[id], duration);
 }
 
-function bindViewPresetClearOnUserInput() {
-  controls.addEventListener("start", () => {
-    if (!cameraTween.active) clearActiveViewPreset();
-  });
-  renderer.domElement.addEventListener(
-    "wheel",
-    () => {
-      if (!cameraTween.active) clearActiveViewPreset();
-    },
-    { passive: true },
+// --- Computer-keyboard octave focus (no-MIDI mode) ---
+// Whether the camera is currently framing the computer-keyboard octave range,
+// and which octave shift that framing was built for (so we re-frame on shift).
+let viewingKeyboardRange = false;
+let focusedOctaveShift = 0;
+
+// Reuse the seated preset's view angle (up + toward the player) for the close-up.
+const SEATED_VIEW_DIR = (() => {
+  const s = CAMERA_PRESETS.seated;
+  return new THREE.Vector3(
+    s.position[0] - s.target[0],
+    s.position[1] - s.target[1],
+    s.position[2] - s.target[2],
+  ).normalize();
+})();
+
+/** Inclusive MIDI [lo, hi] the computer keyboard currently maps to. */
+function keyboardRangeNotes() {
+  const base = keyboardBaseNote();
+  return [base, base + KEYBOARD_SPAN];
+}
+
+/** Camera pose framing the keys the computer keyboard plays, or null. */
+function getKeyboardRangePose() {
+  if (!piano) return null;
+  const [lo, hi] = keyboardRangeNotes();
+  const box = piano.rangeBox(lo, hi);
+  if (!box || box.isEmpty()) return null;
+
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+
+  // Distance to frame the key span: fit its width across the horizontal FOV and
+  // its depth/height across the vertical FOV, then add margin.
+  const fov = 40;
+  const vHalf = THREE.MathUtils.degToRad(fov) / 2;
+  const hHalf = Math.atan(Math.tan(vHalf) * Math.max(camera.aspect, 0.0001));
+  const halfW = Math.max(size.x, 0.12) * 0.5;
+  const halfH = Math.max(size.y, size.z) * 0.5;
+  const dist = THREE.MathUtils.clamp(
+    Math.max(halfW / Math.tan(hHalf), halfH / Math.tan(vHalf)) * 1.05 + 0.12,
+    0.35,
+    3.0,
   );
+
+  const position = center.clone().addScaledVector(SEATED_VIEW_DIR, dist);
+  return {
+    position: [position.x, position.y, position.z],
+    target: [center.x, center.y, center.z],
+    fov,
+    exposure: CAMERA_PRESETS.seated.exposure,
+  };
+}
+
+/** Fly the camera to frame the computer-keyboard octave range. */
+function focusKeyboardRange(duration = 0.85) {
+  const pose = getKeyboardRangePose();
+  if (!pose) return;
+  clearActiveViewPreset();
+  animateCameraTo(pose, duration);
+  viewingKeyboardRange = true;
+  focusedOctaveShift = kbOctaveShift;
+}
+
+/** Re-frame the keyboard range if we've drifted off it (e.g. after manual nav). */
+function ensureKeyboardFocus() {
+  if (!viewingKeyboardRange || focusedOctaveShift !== kbOctaveShift) {
+    focusKeyboardRange();
+  }
+}
+
+function bindViewPresetClearOnUserInput() {
+  const onManualInput = () => {
+    if (cameraTween.active) return;
+    clearActiveViewPreset();
+    viewingKeyboardRange = false;
+  };
+  controls.addEventListener("start", onManualInput);
+  renderer.domElement.addEventListener("wheel", onManualInput, { passive: true });
 }
 
 /** Smoothly fly the camera to a pose ({position,target,fov} arrays or vec3s). */
@@ -566,15 +658,17 @@ async function init() {
 
     if (e.code === "KeyZ" || e.code === "KeyX") {
       if (!e.repeat) {
-        kbOctaveShift = Math.max(
-          -3,
-          Math.min(3, kbOctaveShift + (e.code === "KeyZ" ? -1 : 1)),
+        const next = THREE.MathUtils.clamp(
+          kbOctaveShift + (e.code === "KeyZ" ? -1 : 1),
+          OCTAVE_SHIFT_MIN,
+          OCTAVE_SHIFT_MAX,
         );
-        setStatus(
-          kbOctaveShift === 0
-            ? "Octave: middle"
-            : `Octave ${kbOctaveShift > 0 ? "+" : ""}${kbOctaveShift}`,
-        );
+        if (next !== kbOctaveShift) {
+          kbOctaveShift = next;
+          const [lo, hi] = keyboardRangeNotes();
+          setStatus(`Keys ${noteName(lo)}–${noteName(hi)}`);
+          focusKeyboardRange(); // pan/zoom to the keys now under the keyboard
+        }
       }
       return;
     }
@@ -585,6 +679,7 @@ async function init() {
     if (e.repeat || kbHeldNotes.has(e.code)) return;
     kbHeldNotes.set(e.code, note);
     localNoteOn(note, 96);
+    ensureKeyboardFocus(); // first keyboard note frames the playable octaves
   });
 
   window.addEventListener("keyup", (e) => {
@@ -613,6 +708,9 @@ async function init() {
     allowMidiAutoConnect = true;
     maybeAutoConnectMidi();
     preloadAudioIfLocal();
+    // No hardware piano → settle from the hero reveal onto the octaves the
+    // computer keyboard will play.
+    if (!live?.isRunning) focusKeyboardRange(1.4);
   }, 2300);
 }
 

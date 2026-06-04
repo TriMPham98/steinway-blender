@@ -120,6 +120,24 @@ export class PianoController {
     );
   }
 
+  /**
+   * World-space bounding box of the key objects in the inclusive MIDI range
+   * [lo, hi]. Returns null if no mapped keys fall in range.
+   * @param {number} lo @param {number} hi
+   * @returns {THREE.Box3 | null}
+   */
+  rangeBox(lo, hi) {
+    const box = new THREE.Box3();
+    let found = false;
+    for (let note = lo; note <= hi; note++) {
+      const obj = this.noteMap.get(note);
+      if (!obj) continue;
+      box.expandByObject(obj);
+      found = true;
+    }
+    return found ? box : null;
+  }
+
   pick(raycaster) {
     const meshes = [];
     for (const obj of this.noteMap.values()) {
