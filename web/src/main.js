@@ -9,6 +9,7 @@ import { backendAvailable, findDefaultPort, listInputPorts } from "./midi.js";
 import { createSceneDebugPanel } from "./scene-debug.js";
 import {
   CAMERA_PRESETS,
+  KEYBOARD_RANGE_VIEW,
   createContactShadow,
   createStudioGround,
   fitCameraToModel,
@@ -224,20 +225,34 @@ function goToViewPreset(id, duration = 1.0) {
 let viewingKeyboardRange = false;
 let focusedOctaveShift = 0;
 
-// Reuse the seated preset's view angle (up + toward the player) for the close-up.
-const SEATED_VIEW_DIR = (() => {
-  const s = CAMERA_PRESETS.seated;
-  return new THREE.Vector3(
-    s.position[0] - s.target[0],
-    s.position[1] - s.target[1],
-    s.position[2] - s.target[2],
-  ).normalize();
-})();
+// Hand-tuned reference framing (distance / angle / height) for the home octave
+// range; the live view pans it to whatever keys are active.
+const KB_VIEW_TARGET = new THREE.Vector3(...KEYBOARD_RANGE_VIEW.target);
+const KB_VIEW_OFFSET = new THREE.Vector3(
+  KEYBOARD_RANGE_VIEW.position[0] - KEYBOARD_RANGE_VIEW.target[0],
+  KEYBOARD_RANGE_VIEW.position[1] - KEYBOARD_RANGE_VIEW.target[1],
+  KEYBOARD_RANGE_VIEW.position[2] - KEYBOARD_RANGE_VIEW.target[2],
+);
+const KB_VIEW_DIST = KB_VIEW_OFFSET.length();
+const KB_VIEW_DIR = KB_VIEW_OFFSET.clone().normalize();
 
 /** Inclusive MIDI [lo, hi] the computer keyboard currently maps to. */
 function keyboardRangeNotes() {
   const base = keyboardBaseNote();
   return [base, base + KEYBOARD_SPAN];
+}
+
+/** Bounding-box center of the home (C4–E5) range, cached after the model loads. */
+let homeRangeCenter = null;
+function keyboardHomeCenter() {
+  if (homeRangeCenter) return homeRangeCenter;
+  const box = piano?.rangeBox(
+    KEYBOARD_BASE_NOTE,
+    KEYBOARD_BASE_NOTE + KEYBOARD_SPAN,
+  );
+  if (!box || box.isEmpty()) return null;
+  homeRangeCenter = box.getCenter(new THREE.Vector3());
+  return homeRangeCenter;
 }
 
 /** Camera pose framing the keys the computer keyboard plays, or null. */
@@ -246,29 +261,33 @@ function getKeyboardRangePose() {
   const [lo, hi] = keyboardRangeNotes();
   const box = piano.rangeBox(lo, hi);
   if (!box || box.isEmpty()) return null;
+  const home = keyboardHomeCenter();
+  if (!home) return null;
 
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
 
-  // Distance to frame the key span: fit its width across the horizontal FOV and
-  // its depth/height across the vertical FOV, then add margin.
-  const fov = 40;
-  const vHalf = THREE.MathUtils.degToRad(fov) / 2;
-  const hHalf = Math.atan(Math.tan(vHalf) * Math.max(camera.aspect, 0.0001));
-  const halfW = Math.max(size.x, 0.12) * 0.5;
-  const halfH = Math.max(size.y, size.z) * 0.5;
-  const dist = THREE.MathUtils.clamp(
-    Math.max(halfW / Math.tan(hHalf), halfH / Math.tan(vHalf)) * 1.05 + 0.12,
-    0.35,
-    3.0,
+  // Height/depth/distance/angle from the hand-tuned reference; lateral position
+  // centered on the active keys so every octave is balanced in frame.
+  const target = new THREE.Vector3(
+    center.x,
+    KB_VIEW_TARGET.y + (center.y - home.y),
+    KB_VIEW_TARGET.z + (center.z - home.z),
   );
 
-  const position = center.clone().addScaledVector(SEATED_VIEW_DIR, dist);
+  // Hold the reference distance, but pull back if a narrow viewport can't fit
+  // the ~17-key span at that distance.
+  const vHalf = THREE.MathUtils.degToRad(KEYBOARD_RANGE_VIEW.fov) / 2;
+  const hHalf = Math.atan(Math.tan(vHalf) * Math.max(camera.aspect, 0.0001));
+  const fitDist = ((Math.max(size.x, 0.12) * 0.5) / Math.tan(hHalf)) * 1.05;
+  const dist = Math.max(KB_VIEW_DIST, fitDist);
+
+  const position = target.clone().addScaledVector(KB_VIEW_DIR, dist);
   return {
     position: [position.x, position.y, position.z],
-    target: [center.x, center.y, center.z],
-    fov,
-    exposure: CAMERA_PRESETS.seated.exposure,
+    target: [target.x, target.y, target.z],
+    fov: KEYBOARD_RANGE_VIEW.fov,
+    exposure: KEYBOARD_RANGE_VIEW.exposure,
   };
 }
 

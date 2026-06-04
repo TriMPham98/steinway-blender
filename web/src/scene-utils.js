@@ -98,6 +98,19 @@ export const CAMERA_PRESETS = {
   },
 };
 
+/**
+ * Reference framing for the computer-keyboard octave range (no-MIDI mode),
+ * hand-tuned in the scene-debug panel for the home range (C4–E5). The live view
+ * keeps this distance/angle/height and pans to the active octave's keys, so the
+ * framing stays consistent across octave shifts.
+ */
+export const KEYBOARD_RANGE_VIEW = {
+  position: [0.06, 1.1, 1.22],
+  target: [0.06, 0.75, 0.77],
+  fov: 40,
+  exposure: 1.86,
+};
+
 /** Hero (¾ product) view — fixed pose after frameModel centers the piano. */
 export function getHeroCameraPose(root) {
   root.updateMatrixWorld(true);
