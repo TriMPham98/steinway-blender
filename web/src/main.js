@@ -650,7 +650,8 @@ async function init() {
     if (isEditableFocusTarget(document.activeElement)) return;
 
     const presetId = VIEW_PRESET_BY_KEY[e.key];
-    if (presetId) {
+    // Bare 1–4 switch views; Cmd/Ctrl+number is reserved for the browser tab bar.
+    if (presetId && !e.metaKey && !e.ctrlKey) {
       e.preventDefault();
       goToViewPreset(presetId);
       return;

@@ -27,7 +27,7 @@ const TONE = {
   topHz: 4300, //                     low-pass: ~as dark as it gets — sits just
   //                                  above C8's 4186 Hz fundamental so the top
   //                                  octave still speaks; lower = muffled.
-  reverbWet: 0.26, //                 reverb send level (dry stays at unity)
+  reverbWet: 0.38, //                 reverb send level (dry stays at unity)
   reverbBandwidth: 0.4, //            dark signal into the reverb
   reverbDamping: 0.84, //             dark reverb tail
   reverbDecay: 0.7, //                long, roomy tail
