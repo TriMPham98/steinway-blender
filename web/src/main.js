@@ -112,9 +112,10 @@ const KEYBOARD_NOTE_OFFSETS = {
   KeyA: 0, KeyW: 1, KeyS: 2, KeyE: 3, KeyD: 4, KeyF: 5, KeyT: 6,
   KeyG: 7, KeyY: 8, KeyH: 9, KeyU: 10, KeyJ: 11, KeyK: 12,
   KeyO: 13, KeyL: 14, KeyP: 15, Semicolon: 16,
+  Quote: 17, BracketRight: 18, Enter: 19,
 };
 const KEYBOARD_BASE_NOTE = 60; // C4, before octave shift
-const KEYBOARD_SPAN = 16; // semitones from the base key (A) to the top key (;)
+const KEYBOARD_SPAN = 19; // semitones from the base key (A) to the top key (Enter)
 // Clamp the window's base so it always sits fully on the 88-key piano: the
 // lowest shift reaches A0 (base = 21) and the highest puts C8 on the top key
 // (base + span = 108), with no dead keys at the extremes.
