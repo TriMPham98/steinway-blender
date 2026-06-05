@@ -24,6 +24,7 @@ import {
   stripBench,
   stripEmbeddedGround,
   stripBenchLegs,
+  stripStrayCurves,
 } from "./scene-utils.js";
 
 const MODEL_URL = "/models/steinway.glb";
@@ -54,7 +55,15 @@ const camera = new THREE.PerspectiveCamera(
 );
 camera.position.set(...HERO_CAMERA_DEFAULTS.position);
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
+// logarithmicDepthBuffer: the near/far span (~0.01–52) gives the plain 24-bit
+// depth buffer too little precision near the rim, so the interior gold frame
+// z-fights through the thin black case ("brass pieces showing through the
+// shell"). Log depth spreads precision evenly and clears it. The studio-floor
+// Reflector shader already carries the <logdepthbuf_*> chunks for this path.
+const renderer = new THREE.WebGLRenderer({
+  antialias: true,
+  logarithmicDepthBuffer: true,
+});
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -563,8 +572,10 @@ async function init() {
   stripEmbeddedGround(model);
   stripBench(model);
   stripBenchLegs(model);
+  stripStrayCurves(model);
   scene.add(model);
   frameModel(model);
+  if (import.meta.env.DEV) window.__dbg = { scene, camera, renderer, raycaster, model, controls };
   refineMaterials(model);
   setupShadows(model);
   createContactShadow(scene, model);

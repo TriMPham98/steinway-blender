@@ -10,8 +10,10 @@ Pipeline (source of truth: ``assets/steinway_grand_playable.blend``):
 1. Strip scene props (Floor, oversized meshes).
 2. **Bench** — remove ``Seat Cushion``, ``Seat Frame``, and any ``Piano_Bench``.
 3. **Bench legs** — remove the four bench leg meshes (``Leg-01`` … ``Leg-04``) only.
-4. **Body** — join remaining static meshes into ``Piano_Static``.
-5. Flatten materials to fast Principled trees; export GLB. Web viewer refines by
+4. **Stray curves** — remove CURVE objects the mesh-only join skips (they'd export
+   as standalone meshes, e.g. a gold disc floating above the case rim).
+5. **Body** — join remaining static meshes into ``Piano_Static``.
+6. Flatten materials to fast Principled trees; export GLB. Web viewer refines by
    material name (``web/src/scene-utils.js``).
 
 Keys stay separate ``Key.NNN`` with ``midi_note``; sustain pedal keeps
@@ -142,6 +144,26 @@ def _strip_scene_props():
         if obj.name == "Floor" or max(dims.x, dims.y, dims.z) > 5.0:
             removed.append(obj.name)
             bpy.data.objects.remove(obj, do_unlink=True)
+    return removed
+
+
+def _strip_stray_curves():
+    """Delete stray CURVE objects so they don't leak into the export.
+
+    ``_join_static`` only selects ``type == "MESH"``, so Blender curve objects
+    skip the static join and the glTF exporter tessellates them into standalone
+    meshes (e.g. a flat gold disc that floats above the case rim). No real piano
+    part is a curve, so drop them outright.
+    """
+    import bpy
+
+    removed = []
+    for obj in list(bpy.data.objects):
+        if obj.type == "CURVE":
+            removed.append(obj.name)
+            bpy.data.objects.remove(obj, do_unlink=True)
+    if removed:
+        print(f"[export] stray curves removed: {', '.join(removed)}")
     return removed
 
 
@@ -393,6 +415,7 @@ def main():
     stripped = _strip_scene_props()
     _remove_bench()
     _remove_bench_legs()
+    _strip_stray_curves()
     _fix_lid_trim_zfight()
     merged = _join_static()
     manifest = _key_manifest()

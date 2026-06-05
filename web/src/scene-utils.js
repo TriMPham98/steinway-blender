@@ -215,6 +215,28 @@ export function stripBenchLegs(root) {
   return remove.length;
 }
 
+function isStrayCurveObject(obj) {
+  // Blender "Curve" objects skip the export's mesh-only static join, so the glTF
+  // exporter tessellates them into standalone meshes (e.g. a flat gold disc that
+  // floats above the case rim). No real piano part is named "Curve".
+  return /^curve(\.\d+)?$/i.test(obj.name || "");
+}
+
+/** Remove stray tessellated curve objects welded into the model. Returns count removed. */
+export function stripStrayCurves(root) {
+  const remove = [];
+  root.traverse((obj) => {
+    if (isStrayCurveObject(obj)) remove.push(obj);
+  });
+  for (const obj of remove) {
+    obj.parent?.remove(obj);
+    obj.traverse((child) => {
+      if (child.isMesh) child.geometry?.dispose();
+    });
+  }
+  return remove.length;
+}
+
 const SRGB = THREE.SRGBColorSpace;
 const DATA = THREE.NoColorSpace;
 
