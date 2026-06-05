@@ -722,7 +722,7 @@ async function init() {
           kbOctaveShift = next;
           const [lo, hi] = keyboardRangeNotes();
           setStatus(`Keys ${noteName(lo)}–${noteName(hi)}`);
-          focusKeyboardRange(); // pan/zoom to the keys now under the keyboard
+          if (viewingKeyboardRange) focusKeyboardRange(); // pan only after first keyboard play
         }
       }
       return;
@@ -763,9 +763,6 @@ async function init() {
     allowMidiAutoConnect = true;
     maybeAutoConnectMidi();
     preloadAudioIfLocal();
-    // No hardware piano → settle from the hero reveal onto the octaves the
-    // computer keyboard will play.
-    if (!live?.isRunning) focusKeyboardRange(1.4);
   }, 2300);
 }
 
