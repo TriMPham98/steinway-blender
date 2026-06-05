@@ -6,7 +6,7 @@ import { LiveSession } from "./live.js";
 import { PianoAudio } from "./audio.js";
 import { MIDI_HIGH, MIDI_LOW } from "./anim.js";
 import { backendAvailable, findDefaultPort, listInputPorts } from "./midi.js";
-import { createSceneDebugPanel } from "./scene-debug.js";
+
 import {
   CAMERA_PRESETS,
   KEYBOARD_RANGE_VIEW,
@@ -82,8 +82,10 @@ const studioFloor = createStudioGround(scene);
 
 let modelRoot = null;
 let heroCameraDefaults = null;
-/** @type {ReturnType<typeof createSceneDebugPanel> | null} */
+/** @type {{ syncSlidersFromScene: () => void } | null} */
 let sceneDebug = null;
+/** @type {{ syncFromScene: () => void } | null} */
+let lightDebug = null;
 
 const loader = new GLTFLoader();
 const raycaster = new THREE.Raycaster();
@@ -350,6 +352,7 @@ function updateCameraTween(dt) {
     cameraTween.active = false;
     controls.enabled = true;
     sceneDebug?.syncSlidersFromScene();
+    lightDebug?.syncFromScene();
   }
 }
 
@@ -576,34 +579,54 @@ async function init() {
     exposure: pose.exposure,
   };
 
-  sceneDebug = createSceneDebugPanel({
-    camera,
-    controls,
-    renderer,
-    lights,
-    lightingConfig,
-    lightHelpers,
-    onManualCameraChange: clearActiveViewPreset,
-    mount: viewport,
-    getCameraDefaults: () => {
-      if (modelRoot) {
-        const p = getHeroCameraPose(modelRoot);
+  if (import.meta.env.DEV) {
+    const debugStack = document.createElement("div");
+    debugStack.className = "debug-stack";
+    viewport.appendChild(debugStack);
+
+    const [
+      { createSceneDebugPanel },
+      { createLightDebugPanel },
+      { createAudioDebugPanel },
+    ] = await Promise.all([
+      import("./scene-debug.js"),
+      import("./light-debug.js"),
+      import("./audio-debug.js"),
+    ]);
+    // Bottom → top in the stack: Tone, Lights, Debug (see .debug-stack flex).
+    createAudioDebugPanel({ audio, mount: debugStack });
+    lightDebug = createLightDebugPanel({
+      lights,
+      lightingConfig,
+      lightHelpers,
+      mount: debugStack,
+    });
+    sceneDebug = createSceneDebugPanel({
+      camera,
+      controls,
+      renderer,
+      onManualCameraChange: clearActiveViewPreset,
+      mount: debugStack,
+      getCameraDefaults: () => {
+        if (modelRoot) {
+          const p = getHeroCameraPose(modelRoot);
+          return {
+            position: p.position,
+            target: p.target,
+            fov: p.fov,
+            exposure: p.exposure,
+          };
+        }
+        if (heroCameraDefaults) return heroCameraDefaults;
         return {
-          position: p.position,
-          target: p.target,
-          fov: p.fov,
-          exposure: p.exposure,
+          position: new THREE.Vector3(...HERO_CAMERA_DEFAULTS.position),
+          target: new THREE.Vector3(...HERO_CAMERA_DEFAULTS.target),
+          fov: HERO_CAMERA_DEFAULTS.fov,
+          exposure: HERO_CAMERA_DEFAULTS.exposure,
         };
-      }
-      if (heroCameraDefaults) return heroCameraDefaults;
-      return {
-        position: new THREE.Vector3(...HERO_CAMERA_DEFAULTS.position),
-        target: new THREE.Vector3(...HERO_CAMERA_DEFAULTS.target),
-        fov: HERO_CAMERA_DEFAULTS.fov,
-        exposure: HERO_CAMERA_DEFAULTS.exposure,
-      };
-    },
-  });
+      },
+    });
+  }
 
   const defaults = manifest.defaults ?? {};
   feelSettings = {

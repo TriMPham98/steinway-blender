@@ -19,18 +19,21 @@ const DEFAULT_VELOCITY = 90;
 // add weight, notch out the hammer-attack bite, roll off the top, and sit the
 // piano in a darker, slightly longer room. Tweak these to taste — lower the
 // `air`/`top` cuts for more sparkle, raise them for an even mellower tone.
-const TONE = {
-  bodyHz: 240, bodyDb: 3.5, //        low-shelf: low-end weight / warmth
-  lowMidHz: 360, lowMidDb: 2.5, //    peak: woody body (keeps it warm, not thin)
-  biteHz: 2400, biteDb: -6, //        peak cut: tame the percussive hammer attack
-  airHz: 2800, airDb: -10.5, //       high-shelf: deep brightness rolloff
-  topHz: 4300, //                     low-pass: ~as dark as it gets — sits just
-  //                                  above C8's 4186 Hz fundamental so the top
-  //                                  octave still speaks; lower = muffled.
-  reverbWet: 0.12, //                 reverb send level (dry stays at unity)
-  reverbBandwidth: 0.4, //            dark signal into the reverb
-  reverbDamping: 0.84, //             dark reverb tail
-  reverbDecay: 0.7, //                long, roomy tail
+export const TONE_DEFAULTS = {
+  bodyHz: 240,
+  bodyDb: 3.5,
+  lowMidHz: 360,
+  lowMidDb: 2.5,
+  biteHz: 2400,
+  biteDb: -6,
+  airHz: 2800,
+  airDb: -10.5,
+  topHz: 3000,
+  reverbWet: 0.12,
+  reverbBandwidth: 0.4,
+  reverbDamping: 0.84,
+  reverbDecay: 0.7,
+  outputGain: 0.9,
 };
 
 export class PianoAudio {
@@ -55,6 +58,43 @@ export class PianoAudio {
     this.onLoading = null;
     /** Fired once when samples finish loading. @type {(() => void) | null} */
     this.onLoaded = null;
+    /** Live tone/EQ/reverb params (see {@link TONE_DEFAULTS}). */
+    this.tone = { ...TONE_DEFAULTS };
+    /** smplr instrument volume (0–127). */
+    this.sampleVolume = 110;
+    /** @type {ToneChain | null} */
+    this._toneChain = null;
+  }
+
+  /** Push {@link tone} and {@link sampleVolume} to the active audio graph. */
+  applyTone() {
+    const chain = this._toneChain;
+    if (!chain) return;
+    const t = this.tone;
+    chain.body.frequency.value = t.bodyHz;
+    chain.body.gain.value = t.bodyDb;
+    chain.lowMid.frequency.value = t.lowMidHz;
+    chain.lowMid.gain.value = t.lowMidDb;
+    chain.bite.frequency.value = t.biteHz;
+    chain.bite.gain.value = t.biteDb;
+    chain.air.frequency.value = t.airHz;
+    chain.air.gain.value = t.airDb;
+    chain.top.frequency.value = t.topHz;
+    chain.output.gain.value = t.outputGain;
+    chain.wet.gain.value = t.reverbWet;
+    if (chain.reverb) {
+      setReverbParam(chain.reverb, "bandwidth", t.reverbBandwidth);
+      setReverbParam(chain.reverb, "damping", t.reverbDamping);
+      setReverbParam(chain.reverb, "decay", t.reverbDecay);
+    }
+    if (this.piano) this.piano.volume = this.sampleVolume;
+  }
+
+  /** Restore shipped defaults and apply them. */
+  resetTone() {
+    this.tone = { ...TONE_DEFAULTS };
+    this.sampleVolume = 110;
+    this.applyTone();
   }
 
   /** Whether Web Audio is available in this browser. */
@@ -80,13 +120,14 @@ export class PianoAudio {
     }
     this.context = new Ctx({ latencyHint: "interactive" });
     // Route the bright sampled grand through a warm tone chain so it reads more
-    // Bösendorfer than Yamaha (see TONE).
-    const tone = buildWarmToneChain(this.context);
-    tone.output.connect(this.context.destination);
+    // Bösendorfer than Yamaha (see TONE_DEFAULTS).
+    this._toneChain = buildWarmToneChain(this.context, this.tone);
+    this._toneChain.output.connect(this.context.destination);
     this.piano = SplendidGrandPiano(this.context, {
-      volume: 110,
-      destination: tone.input,
+      volume: this.sampleVolume,
+      destination: this._toneChain.input,
     });
+    this.applyTone();
     this.onLoading?.();
     this._loadPromise = this.piano.ready
       .then(() => {
@@ -180,40 +221,39 @@ export class PianoAudio {
  * reverb mixed in behind the dry signal. The piano feeds `input`; `output` goes
  * on to the speakers.
  * @param {AudioContext} ctx
- * @returns {{ input: GainNode, output: GainNode }}
+ * @param {typeof TONE_DEFAULTS} tone
+ * @returns {ToneChain}
  */
-function buildWarmToneChain(ctx) {
+function buildWarmToneChain(ctx, tone) {
   const input = ctx.createGain();
   const output = ctx.createGain();
-  // A little headroom: the low-shelf adds weight, so back off to stay clear of
-  // clipping on dense bass chords.
-  output.gain.value = 0.9;
+  output.gain.value = tone.outputGain;
 
   const body = ctx.createBiquadFilter();
   body.type = "lowshelf";
-  body.frequency.value = TONE.bodyHz;
-  body.gain.value = TONE.bodyDb;
+  body.frequency.value = tone.bodyHz;
+  body.gain.value = tone.bodyDb;
 
   const lowMid = ctx.createBiquadFilter();
   lowMid.type = "peaking";
-  lowMid.frequency.value = TONE.lowMidHz;
+  lowMid.frequency.value = tone.lowMidHz;
   lowMid.Q.value = 0.9;
-  lowMid.gain.value = TONE.lowMidDb;
+  lowMid.gain.value = tone.lowMidDb;
 
   const bite = ctx.createBiquadFilter();
   bite.type = "peaking";
-  bite.frequency.value = TONE.biteHz;
+  bite.frequency.value = tone.biteHz;
   bite.Q.value = 1.1;
-  bite.gain.value = TONE.biteDb;
+  bite.gain.value = tone.biteDb;
 
   const air = ctx.createBiquadFilter();
   air.type = "highshelf";
-  air.frequency.value = TONE.airHz;
-  air.gain.value = TONE.airDb;
+  air.frequency.value = tone.airHz;
+  air.gain.value = tone.airDb;
 
   const top = ctx.createBiquadFilter();
   top.type = "lowpass";
-  top.frequency.value = TONE.topHz;
+  top.frequency.value = tone.topHz;
   top.Q.value = 0.5;
 
   // Dry path: input → EQ → output.
@@ -224,17 +264,17 @@ function buildWarmToneChain(ctx) {
   air.connect(top);
   top.connect(output);
 
-  // Warm room: a darker, slightly longer reverb tail mixed in behind the dry
-  // signal. Wired once the reverb reports ready (it may spin up a worklet).
+  const wet = ctx.createGain();
+  wet.gain.value = tone.reverbWet;
+  wet.connect(output);
+
+  let reverb = null;
   try {
-    const reverb = Reverb(ctx);
-    const wet = ctx.createGain();
-    wet.gain.value = TONE.reverbWet;
-    wet.connect(output);
+    reverb = Reverb(ctx);
     const wire = () => {
-      setReverbParam(reverb, "bandwidth", TONE.reverbBandwidth);
-      setReverbParam(reverb, "damping", TONE.reverbDamping);
-      setReverbParam(reverb, "decay", TONE.reverbDecay);
+      setReverbParam(reverb, "bandwidth", tone.reverbBandwidth);
+      setReverbParam(reverb, "damping", tone.reverbDamping);
+      setReverbParam(reverb, "decay", tone.reverbDecay);
       top.connect(reverb.input);
       reverb.connect(wet);
     };
@@ -247,8 +287,23 @@ function buildWarmToneChain(ctx) {
     /* reverb optional — the dry warm chain still sounds */
   }
 
-  return { input, output };
+  return { input, output, body, lowMid, bite, air, top, wet, reverb };
 }
+
+/**
+ * @typedef {typeof TONE_DEFAULTS} ToneParams
+ * @typedef {{
+ *   input: GainNode,
+ *   output: GainNode,
+ *   body: BiquadFilterNode,
+ *   lowMid: BiquadFilterNode,
+ *   bite: BiquadFilterNode,
+ *   air: BiquadFilterNode,
+ *   top: BiquadFilterNode,
+ *   wet: GainNode,
+ *   reverb: { getParam?: (name: string) => AudioParam | undefined, input?: AudioNode } | null,
+ * }} ToneChain
+ */
 
 /**
  * Set one smplr-Reverb parameter by name, if present.
