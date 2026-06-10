@@ -136,7 +136,11 @@ export function fitCameraToModel(camera, controls, root) {
   controls.target.copy(pose.target);
   camera.position.copy(pose.position);
   camera.fov = pose.fov;
-  camera.near = Math.max(0.01, pose.radius / 200);
+  // Near-plane distance sets the floor on depth precision. The old radius/200 (≈0.01)
+  // left the interior gold frame z-fighting through the thin black case; pull near out
+  // to 0.08 — still well inside controls.minDistance (0.3), so nothing close clips —
+  // for far more bits near the rim. far stays generous so the studio floor isn't cut.
+  camera.near = Math.max(0.08, pose.radius / 30);
   camera.far = Math.max(50, pose.radius * 40);
   camera.updateProjectionMatrix();
   controls.update();
@@ -275,7 +279,7 @@ function lacquerFromExport(mat, { matte, lite }) {
   });
 }
 
-/** Pull trim metals slightly toward the camera — backup for flush lid-edge geometry. */
+/** Tune exported metals (color/roughness); depth is left to the geometry + log buffer. */
 function tuneMetal(mat, fallbackColor, fallbackRough) {
   prepMaps(mat);
   mat.metalness = 1.0;
@@ -294,9 +298,10 @@ function tuneMetal(mat, fallbackColor, fallbackRough) {
     mat.map = null;
   }
   mat.color = new THREE.Color(fallbackColor);
-  mat.polygonOffset = true;
-  mat.polygonOffsetFactor = -2;
-  mat.polygonOffsetUnits = -2;
+  // No polygonOffset: the old -2 bias pulled metals toward the camera and let the
+  // interior gold frame punch through the thin black case. The lid-edge trim is
+  // separated geometrically at export (_fix_lid_trim_zfight) and the log depth
+  // buffer resolves it cleanly, so the forward bias is no longer needed.
   return mat;
 }
 

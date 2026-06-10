@@ -575,7 +575,6 @@ async function init() {
   stripStrayCurves(model);
   scene.add(model);
   frameModel(model);
-  if (import.meta.env.DEV) window.__dbg = { scene, camera, renderer, raycaster, model, controls };
   refineMaterials(model);
   setupShadows(model);
   createContactShadow(scene, model);

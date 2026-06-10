@@ -9,6 +9,13 @@ notes snap down fast and soft notes ease in -- but every note still travels the
 full ``press_angle`` (speed-only dynamics). The applied rotation is
 ``pos * press_angle`` about local +X (tips the key's front edge down); a hard
 clamp at ``pos == 1`` gives a crisp key-bed bottom-out.
+
+If the model carries the double-escapement action (``build/action.py``), each
+key also exposes a ``["hammer"]`` strike channel its hammer driver reads: when a
+struck key sweeps past :data:`HAMMER_FIRE_POS` the channel spikes to 1 (the jack
+throws the hammer at the string) and decays over :data:`HAMMER_DECAY` seconds
+(the hammer rebounds and falls back to the repetition lever / check). Keys
+without the property are skipped, so the animator still runs on plain models.
 """
 
 import math
@@ -18,6 +25,8 @@ import bpy  # noqa: F401  (used via objects passed in note_map)
 
 SETTLE = 1e-3        # snap + stop animating once pos error and |vel| are below this
 PEDAL_ANGLE = math.radians(5.0)   # how far the sustain pedal tips when pressed
+HAMMER_FIRE_POS = 0.55   # press depth where the jack throws the hammer
+HAMMER_DECAY = 0.045     # strike-impulse decay time constant (s)
 _SUBSTEP = 0.005     # fixed integrator sub-step (s) -- keeps the spring stable
 _MAX_DT = 0.05       # clamp frame dt so a hitch can't blow the integrator up
 _RELEASE_DAMP = 0.8  # release damping as a fraction of critical (<1 = snappier)
@@ -68,6 +77,8 @@ class LiveState:
     vel: dict = field(default_factory=dict)          # note -> depth velocity (1/s)
     target: dict = field(default_factory=dict)       # note -> 0.0 (up) or 1.0 (down)
     active: set = field(default_factory=set)         # notes still moving
+    ham: dict = field(default_factory=dict)          # note -> strike impulse 0..1
+    ham_pending: set = field(default_factory=set)    # struck, hammer not yet thrown
     pedal_obj: object = None            # the sustain-pedal object to tilt (or None)
     pedal_target: float = 0.0
     pedal_current: float = 0.0
@@ -111,8 +122,10 @@ def set_note(state, note, velocity):
         state.target[note] = 1.0
         kick = _strike_speed(state.feel, velocity)
         state.vel[note] = max(state.vel.get(note, 0.0), kick)
+        state.ham_pending.add(note)      # hammer fires when the key sweeps down
     else:
         state.target[note] = 0.0
+        state.ham_pending.discard(note)
     state.active.add(note)
 
 
@@ -138,6 +151,7 @@ def ease_step(state, press_angle, dt):
     press_k, press_c = feel.stiffness, feel.press_damping
     release_k = feel.release_stiffness
     release_c = 2.0 * math.sqrt(release_k) * _RELEASE_DAMP   # stiff + snappy return
+    fired = set()                        # hammers thrown this frame (full impulse)
 
     for note in list(state.active):
         obj = state.note_map.get(note)
@@ -164,6 +178,25 @@ def ease_step(state, press_angle, dt):
         state.pos[note] = pos
         state.vel[note] = vel
         obj.rotation_euler.x = pos * press_angle
+        if note in state.ham_pending and pos >= HAMMER_FIRE_POS:
+            state.ham_pending.discard(note)      # jack escapes: hammer in flight
+            state.ham[note] = 1.0
+            fired.add(note)
+
+    # Hammer strike impulses: spike to the string, decay back to the check.
+    if state.ham:
+        decay = math.exp(-dt / HAMMER_DECAY)
+        for note in list(state.ham):
+            v = state.ham[note] if note in fired else state.ham[note] * decay
+            if v < 0.004:
+                del state.ham[note]
+                v = 0.0
+            else:
+                state.ham[note] = v
+            obj = state.note_map.get(note)
+            if obj is not None and "hammer" in obj:
+                obj["hammer"] = v
+                obj.update_tag()
 
     # Sustain pedal: simple dt-aware ease (no velocity).
     if state.pedal_active and state.pedal_obj is not None:
@@ -175,19 +208,24 @@ def ease_step(state, press_angle, dt):
         state.pedal_current = cur
         state.pedal_obj.rotation_euler.x = cur * PEDAL_ANGLE
 
-    return bool(state.active) or state.pedal_active
+    return bool(state.active) or bool(state.ham) or state.pedal_active
 
 
 def reset(state):
     """Flatten every key (and the pedal) and clear animation state (used on stop)."""
     for obj in state.note_map.values():
         obj.rotation_euler.x = 0.0
+        if "hammer" in obj:
+            obj["hammer"] = 0.0
+            obj.update_tag()
     if state.pedal_obj is not None:
         state.pedal_obj.rotation_euler.x = 0.0
     state.pos.clear()
     state.vel.clear()
     state.target.clear()
     state.active.clear()
+    state.ham.clear()
+    state.ham_pending.clear()
     state.pedal_target = 0.0
     state.pedal_current = 0.0
     state.pedal_active = False

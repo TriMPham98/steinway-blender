@@ -73,7 +73,8 @@ def _test_split(bpy, retarget):
 def _test_anim(bpy, anim):
     for note, cx in ((60, 0.0), (61, 0.03), (64, 0.09)):
         v, f = _box(cx)
-        _mesh_obj(bpy, f"Key.{note:03d}", v, [], f, props={"midi_note": note})
+        _mesh_obj(bpy, f"Key.{note:03d}", v, [], f,
+                  props={"midi_note": note, "hammer": 0.0})
     v, f = _box(0.0, w=0.04, y0=-0.18, y1=0.0)
     _mesh_obj(bpy, "Right Sustain Pedal", v, [], f, props={"steinway_role": "sustain_pedal"})
 
@@ -118,6 +119,21 @@ def _test_anim(bpy, anim):
     assert down > press_angle * 0.98, "note should fully bottom out"
     assert peak <= press_angle + 1e-4, "key must not pass the key bed"
     assert abs(s.note_map[61].rotation_euler.x) < 1e-6, "neighbour key moved"
+
+    # The hammer strike channel spikes as the key sweeps down, then decays away
+    # (the action drivers read Key["hammer"]; without the action it is inert).
+    s2 = fresh()
+    anim.set_note(s2, 60, 110)
+    peak_ham = 0.0
+    for _ in range(200):
+        anim.ease_step(s2, press_angle, dt)
+        peak_ham = max(peak_ham, float(s2.note_map[60].get("hammer", 0.0)))
+    print(f"[selftest] hammer impulse peak: {peak_ham:.3f}")
+    assert peak_ham > 0.95, "hammer channel should spike on a hard strike"
+    assert float(s2.note_map[60]["hammer"]) == 0.0, "hammer impulse should decay to 0"
+    assert float(s2.note_map[61].get("hammer", 0.0)) == 0.0, "neighbour hammer fired"
+    anim.reset(s2)
+    assert float(s2.note_map[60]["hammer"]) == 0.0, "reset should clear hammer channel"
 
     # Release is snappy: the key returns to flat quickly.
     anim.set_note(s, 60, 0)

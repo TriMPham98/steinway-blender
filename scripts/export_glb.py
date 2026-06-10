@@ -59,6 +59,30 @@ def _is_pedal(obj):
     return obj.get("steinway_role") == "sustain_pedal"
 
 
+def _is_action(obj):
+    return obj.get("action_part") is not None
+
+
+def _strip_action(keep):
+    """Drop the double-escapement action (hidden inside the case) from the GLB.
+
+    440+ extra nodes/draw calls buy nothing in the closed-case web view; pass
+    ``--with-action`` to keep the parts (exported at rest - glTF has no drivers).
+    """
+    import bpy
+
+    if keep:
+        return 0
+    removed = 0
+    for obj in list(bpy.data.objects):
+        if obj.type == "MESH" and _is_action(obj):
+            bpy.data.objects.remove(obj, do_unlink=True)
+            removed += 1
+    if removed:
+        print(f"[export] action parts stripped: {removed} (--with-action keeps them)")
+    return removed
+
+
 def _is_bench(obj):
     return obj.name in ("Seat Cushion", "Seat Frame", "Piano_Bench")
 
@@ -214,6 +238,8 @@ def _join_static():
         if obj.type != "MESH":
             continue
         if _is_key(obj) or _is_pedal(obj) or _is_bench(obj) or _is_bench_leg(obj):
+            continue
+        if _is_action(obj):     # moving parts (with --with-action) stay separate
             continue
         obj.select_set(True)
         targets.append(obj)
@@ -412,6 +438,7 @@ def main():
 
     t0 = time.time()
     _strip_lid_hinge()
+    _strip_action(keep="--with-action" in _argv_after_double_dash())
     stripped = _strip_scene_props()
     _remove_bench()
     _remove_bench_legs()

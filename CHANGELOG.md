@@ -7,6 +7,40 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 The version here tracks `version` in
 `extension/steinway_midi_piano/blender_manifest.toml`.
 
+## [0.5.0] - 2026-06-10
+
+### Added
+- **Double-escapement (repetition) action.** `build/action.py` measures the model
+  (per-note string fronts, damper fronts, overhead clearance via BVH raycasts),
+  fits the diagonal action line, and builds the full 88-note grand action behind
+  the fallboard: hidden seesaw **key arms** (brass capstan + leather backcheck),
+  **wippens** on a support rail, L-shaped **jacks** whose toes ride felted
+  **let-off buttons**, slotted **repetition levers** (knuckle saddle, button
+  window, brass spring) stopped by **drop screws**, and felt-and-walnut
+  **hammers** with leather knuckles on a shank rail. Everything is rigged with
+  drivers off each key's `rotation_euler.x` using Blender's trusted
+  simple-expression subset (no script auto-run needed), with physically
+  consistent gains: the heel rides the capstan, the toe pins on the button so the
+  jack escapes near full press, the drop screw checks the lever, and the falling
+  knuckle lands back on the saddle — the double escapement. New **Build Double
+  Escapement** panel button, plus `scripts/build_action.py` for headless builds
+  (`--out` saves; dry run verifies contact errors < 2 mm and prints a summary).
+- **Live hammer strikes.** `anim.py` now drives a per-key `Key["hammer"]`
+  impulse the hammer drivers read: when a struck key sweeps past 55% depth the
+  hammer flies to its per-note strike height (raycast just under the plate web /
+  string band) and decays back to the check over ~45 ms. Keys without the
+  channel are skipped, so plain models behave as before.
+- The model's imported soundboard slab extended under the strike zone where a
+  real piano has the action gap; the builder cuts its front edge back along the
+  action line (hidden under the Music Shelf, marked idempotent, and the playable
+  .blend stays fully regenerable from the source model).
+
+### Changed
+- `scripts/export_glb.py` strips the (case-hidden) action parts from the web GLB
+  by default — they would add ~440 draw calls for nothing; pass `--with-action`
+  to keep them as separate rest-pose nodes (they are excluded from the static
+  join either way).
+
 ## [0.4.2] - 2026-06-01
 
 ### Changed

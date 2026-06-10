@@ -19,6 +19,13 @@ class STEINWAY_PT_panel(bpy.types.Panel):
         ready = sum(1 for o in bpy.data.objects if o.get("midi_note") is not None)
         if ready >= 88:
             layout.label(text=f"Keys ready ({ready})", icon="CHECKMARK")
+            hammers = sum(
+                1 for o in bpy.data.objects if o.get("action_part") == "hammer"
+            )
+            if hammers >= 88:
+                layout.label(text=f"Action ready ({hammers} hammers)", icon="CHECKMARK")
+            else:
+                layout.operator("steinway.build_action", icon="MOD_BUILD")
         else:
             layout.operator("steinway.prepare", icon="MOD_BUILD")
 

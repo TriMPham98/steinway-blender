@@ -8,6 +8,10 @@ down faster the harder you strike — and the sustain pedal tips when you hold C
 - Drives a real, swappable model (`SteinwayGrandPiano.blend`): a one-time
   **Prepare** step splits its joined key meshes into 88 objects precisely mapped
   to MIDI notes 21–108, each pivoting at its rear hinge.
+- A one-time **Build Double Escapement** step adds the full 88-note grand action
+  behind the fallboard — wippens, jacks, repetition levers, drop screws, and felt
+  hammers — driver-rigged to the keys, so hammers fly at the strings when you
+  play (visible with the case/music shelf hidden or a camera inside).
 - Live MIDI via `mido` + `python-rtmidi`, drained non-blocking each tick — no
   keyframes, low latency, `bpy` stays on the main thread.
 - Packaged as a Blender **extension** with the native MIDI backend wheel bundled,
@@ -52,6 +56,9 @@ down faster the harder you strike — and the sustain pedal tips when you hold C
 3. Click **Prepare Imported Keys** — this splits the joined key meshes into 88
    MIDI-mapped keys and tags the sustain pedal. (An already-prepared file shows
    *Keys ready* and skips this.)
+   Then (optional) click **Build Double Escapement** to add the 88-note hammer
+   action inside the case — once built the panel shows *Action ready*. Hide the
+   `Music Shelf` (or put a camera in the cavity) to watch it work.
 4. Plug in your P515, then set **Port** to your piano (shows as “P-515” / a digital
    piano / USB-MIDI device).
 5. Click **Start** ▶ and play — keys move live and the pedal tips when you hold
@@ -64,9 +71,10 @@ down faster the harder you strike — and the sustain pedal tips when you hold C
 | File | Role |
 |---|---|
 | `build/retarget.py` | splits the imported `White Keys`/`Black Keys` meshes into 88 objects `Key.021…Key.108` (origins at the rear hinge, tagged `midi_note`/`key_color`); re-origins + tags `Right Sustain Pedal`; centers the logo + tidies collection names |
+| `build/action.py` | builds the 88-note **double-escapement action** (`Steinway_Action` collection): measures string/damper fronts per note, fits the action line, cuts the soundboard's belly-rail gap, and rigs key arms → wippens → jacks/repetition levers → hammers with simple-expression drivers off each key's rotation (plus a `Key["hammer"]` strike channel) |
 | `build/_geom.py` | collection helpers used by the retarget step |
 | `midi.py` | `mido` wrapper; drains note on/off + CC64 non-blocking via `iter_pending()` |
-| `anim.py` | per-key velocity-driven spring-damper about local +X (hard strikes snap down fast, crisp key-bed bottom-out, snappy release); tips the tagged pedal on sustain |
+| `anim.py` | per-key velocity-driven spring-damper about local +X (hard strikes snap down fast, crisp key-bed bottom-out, snappy release); fires the hammer strike impulse as a struck key sweeps down; tips the tagged pedal on sustain |
 | `operators.py` | Prepare operator + modal operator + ~100 Hz timer gluing MIDI → key/pedal rotation |
 | `props.py`, `panel.py` | the N-panel and its settings |
 
@@ -84,6 +92,9 @@ $B --background assets/SteinwayGrandPiano.blend --python scripts/prepare_model.p
 # also bake a ready-to-play file (the source is opened read-only):
 $B --background assets/SteinwayGrandPiano.blend --python scripts/prepare_model.py -- \
    --out assets/steinway_grand_playable.blend
+# build + verify the double-escapement action (drop --out for a dry run):
+$B --background assets/steinway_grand_playable.blend --python scripts/build_action.py -- \
+   --out assets/steinway_grand_playable.blend
 # hermetic splitter + anim self-test, no hardware or model needed:
 $B --background --python scripts/selftest.py
 bash scripts/build_wheel.sh                                  # (re)build the python-rtmidi wheel
@@ -94,11 +105,13 @@ bash scripts/build_wheel.sh                                  # (re)build the pyt
 
 ## Scope / roadmap
 
-v1 drives **velocity-sensitive keys + a sustain-pedal tilt**: keys follow your
-fingers with a spring-damper whose attack speed tracks how hard you play, and the
-pedal moves with CC64. Designed-in extension points for later: **hammer/damper
-action** (so sustain actually holds notes), velocity-driven glow, and keyframe
-recording for rendered video.
+v0.5 drives **velocity-sensitive keys, a sustain-pedal tilt, and the full
+double-escapement hammer action**: keys follow your fingers with a spring-damper
+whose attack speed tracks how hard you play, the pedal moves with CC64, and each
+key's wippen/jack/repetition-lever/hammer train follows it kinematically —
+hammers fly to the strings on a strike, drop to the check, and the jack escapes
+at let-off. Still planned: **damper motion** (so sustain visually holds notes),
+velocity-driven glow, and keyframe recording for rendered video.
 
 ## Troubleshooting
 

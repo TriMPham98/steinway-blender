@@ -7,7 +7,7 @@ import subprocess
 
 import bpy
 
-from .build import retarget
+from .build import retarget, action
 from . import midi, anim
 
 _TIMER_INTERVAL = 0.01   # modal timer period (s); also the first-frame dt seed
@@ -37,6 +37,34 @@ class STEINWAY_OT_prepare(bpy.types.Operator):
                 f"(MIDI {summary['low']}..{summary['high']}); "
                 f"pedal: {summary['pedal'] or 'not found'}",
             )
+        return {"FINISHED"}
+
+
+class STEINWAY_OT_build_action(bpy.types.Operator):
+    bl_idname = "steinway.build_action"
+    bl_label = "Build Double Escapement"
+    bl_description = (
+        "Build the 88-note grand action behind the fallboard - key arms with "
+        "capstans and backchecks, wippens, jacks, repetition levers, and felt "
+        "hammers that strike when you play"
+    )
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return any(o.get("midi_note") is not None for o in bpy.data.objects)
+
+    def execute(self, context):
+        try:
+            summary = action.build()
+        except Exception as exc:  # noqa: BLE001 - surface a clear message in the UI
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+        self.report(
+            {"INFO"},
+            f"Action built: {summary['notes']} notes, {summary['objects']} parts "
+            f"(soundboard: {summary['soundboard']})",
+        )
         return {"FINISHED"}
 
 
@@ -184,6 +212,7 @@ def _redraw(context):
 
 _CLASSES = (
     STEINWAY_OT_prepare,
+    STEINWAY_OT_build_action,
     STEINWAY_OT_install_backend,
     STEINWAY_OT_live,
     STEINWAY_OT_stop,
