@@ -99,8 +99,10 @@ PART_PROP = "action_part"
 NOTE_PROP = "action_note"
 
 # Meshes the hammers must clear from below (strike-height raycast targets).
+# "Strings_Full" is the rebuilt 88-course set (build/strings.py), present once
+# that step has run; missing names are skipped.
 _OBSTACLES = (
-    "Strings", "String Pins", "Dampers Bottoms", "Dampers Tops",
+    "Strings", "Strings_Full", "String Pins", "Dampers Bottoms", "Dampers Tops",
     "Brass_Sound_Works.001", "Brass_Sound_Works.002",
     "String Supports-01", "String Supports-02", SOUNDBOARD,
 )

@@ -1,0 +1,312 @@
+"""Complete the model's string set: 88 unison courses in the original fan.
+
+The imported model ships 51 identical fat copper strings (~3.2 mm, one per
+decorative damper) spread across the harp - a stylized stand-in. A real grand
+of this footprint (1.77 m: a Steinway Model O scale) carries ~88 courses:
+wound monochords low, wound bichords through the bass fan, and plain-steel
+trichords above the section break, with gauges tapering toward the treble.
+
+This builder replaces the stand-ins with a full set that keeps the model's own
+geometry: each existing string contributes a sample of the fan (front/pin end,
+rear/hitch end, height), and every new course is interpolated from those
+samples so it lands on the same pin field, hitch line, and string plane. Each
+course is anchored at its key's x on the hammer strike line, so every hammer
+of the double-escapement action sits under its own unisons.
+
+Sections follow the model's physical layout (its bass fan is wider than a
+textbook scale): the bass/treble break falls where the model's two fans split,
+at note 50 (C#3):
+
+- notes 21-30: wound copper monochords (r 1.5 -> 1.3 mm)
+- notes 31-49: wound copper bichords  (r 1.15 -> 0.9 mm)
+- notes 50-108: plain steel trichords (r 0.65 -> 0.42 mm)
+
+The original ``Strings`` object stays in the file for measurement and as the
+source of truth, but is hidden and tagged ``steinway_replaced`` (the GLB export
+strips it; the new ``Strings_Full`` object joins the static piano instead).
+
+Pure ``bpy`` (no ``bpy.ops``), headless-safe, idempotent.
+"""
+
+import math
+
+import bpy
+from mathutils import Vector
+
+from . import retarget
+from . import action as action_mod
+
+SOURCE = "Strings"
+OUTPUT = "Strings_Full"
+REPLACED_PROP = "steinway_replaced"
+
+BREAK_NOTE = 50          # first plain-steel trichord (the model's fan gap)
+MONO_TOP = 30            # last monochord note
+SECTIONS = {
+    "mono": {"count": 1, "spread": 0.0, "r": (0.00150, 0.00130)},
+    "bi": {"count": 2, "spread": 0.0030, "r": (0.00115, 0.00090)},
+    "tri": {"count": 3, "spread": 0.0044, "r": (0.00065, 0.00042)},
+}
+
+STEEL_MAT = "Strings_Steel"
+COPPER, STEEL = 0, 1
+
+
+def _section_of(note):
+    if note < BREAK_NOTE:
+        return "mono" if note <= MONO_TOP else "bi"
+    return "tri"
+
+
+# --------------------------------------------------------------------------- #
+# Measure the existing fan
+# --------------------------------------------------------------------------- #
+def _string_samples():
+    """Per existing string: front mean, rear mean, sorted into bass/main fans.
+
+    Bass strings run overstrung toward the rear-right (rear x well past front
+    x); everything else (crossing tenor + straight treble) forms one
+    continuous 'main' fan.
+    """
+    obj = bpy.data.objects.get(SOURCE)
+    if obj is None or obj.type != "MESH":
+        raise RuntimeError(f"'{SOURCE}' mesh not found - open the Steinway model")
+    me = obj.data
+    mw = obj.matrix_world
+    comps = retarget._components(me)
+    if len(comps) < 10:
+        raise RuntimeError(f"'{SOURCE}' split into {len(comps)} strings - unexpected model")
+
+    bass, main = [], []
+    for c in comps:
+        pts = [mw @ me.vertices[i].co for i in c]
+        ymin = min(p.y for p in pts)
+        ymax = max(p.y for p in pts)
+        front = [p for p in pts if p.y < ymin + 0.004]
+        rear = [p for p in pts if p.y > ymax - 0.004]
+        F = sum(front, Vector()) / len(front)
+        R = sum(rear, Vector()) / len(rear)
+        (bass if (R.x - F.x) > 0.1 else main).append((F, R))
+    bass.sort(key=lambda fr: fr[0].x)
+    main.sort(key=lambda fr: fr[0].x)
+    return bass, main
+
+
+def _anchor_x(F, R, a, b):
+    """X where the segment F->R crosses the strike line y = a + b*x."""
+    d = R - F
+    denom = d.y - b * d.x
+    t = (a + b * F.x - F.y) / denom
+    return (F + t * d).x, t
+
+
+def _course_endpoints(fan, anchors, x):
+    """Front/rear for a course anchored at strike-line x, lerped from the fan."""
+    n = len(fan)
+    if x <= anchors[0]:
+        i, j, t = 0, 1, (x - anchors[0]) / (anchors[1] - anchors[0])
+    elif x >= anchors[-1]:
+        i, j = n - 2, n - 1
+        t = 1.0 + (x - anchors[-1]) / (anchors[-1] - anchors[-2])
+    else:
+        j = next(k for k in range(1, n) if anchors[k] >= x)
+        i = j - 1
+        t = (x - anchors[i]) / (anchors[j] - anchors[i])
+    F = fan[i][0].lerp(fan[j][0], t)
+    R = fan[i][1].lerp(fan[j][1], t)
+    return F, R
+
+
+# --------------------------------------------------------------------------- #
+# Build
+# --------------------------------------------------------------------------- #
+def _hex_string(buf_v, buf_f, buf_m, F, R, r, mat):
+    """Hexagonal prism from F to R with radius r (verts/faces into the bufs)."""
+    d = (R - F).normalized()
+    side = d.cross(Vector((0.0, 0.0, 1.0))).normalized()
+    up = side.cross(d).normalized()
+    base = len(buf_v)
+    for origin in (F, R):
+        for k in range(6):
+            ang = math.pi / 3.0 * k
+            buf_v.append(origin + (side * math.cos(ang) + up * math.sin(ang)) * r)
+    for k in range(6):
+        buf_f.append((base + k, base + (k + 1) % 6,
+                      base + 6 + (k + 1) % 6, base + 6 + k))
+        buf_m.append(mat)
+    buf_f.append(tuple(base + k for k in range(5, -1, -1)))
+    buf_f.append(tuple(base + 6 + k for k in range(6)))
+    buf_m += [mat, mat]
+
+
+def _steel_material():
+    mat = bpy.data.materials.get(STEEL_MAT)
+    if mat is None:
+        mat = bpy.data.materials.new(STEEL_MAT)
+        mat.use_nodes = True
+        bsdf = next(n for n in mat.node_tree.nodes if n.type == "BSDF_PRINCIPLED")
+        bsdf.inputs["Base Color"].default_value = (0.75, 0.76, 0.78, 1.0)
+        bsdf.inputs["Metallic"].default_value = 1.0
+        bsdf.inputs["Roughness"].default_value = 0.25
+        mat.diffuse_color = (0.75, 0.76, 0.78, 1.0)
+    return mat
+
+
+# --------------------------------------------------------------------------- #
+# Damper re-seating (the decorative damper units rode the fat stand-ins)
+# --------------------------------------------------------------------------- #
+def _damper_units():
+    """Cluster the joined damper meshes into per-unit component groups by x."""
+    comps_all = []
+    for name in ("Dampers Tops", "Dampers Bottoms"):
+        obj = bpy.data.objects.get(name)
+        if obj is None or obj.type != "MESH":
+            return []
+        mw = obj.matrix_world
+        me = obj.data
+        for c in retarget._components(me):
+            pts = [mw @ me.vertices[i].co for i in c]
+            comps_all.append({
+                "obj": obj, "idx": c,
+                "cx": sum(p.x for p in pts) / len(pts),
+                "cy": sum(p.y for p in pts) / len(pts),
+                "zmin": min(p.z for p in pts),
+                "is_felt": name == "Dampers Bottoms",
+            })
+    comps_all.sort(key=lambda d: d["cx"])
+    units = []
+    for d in comps_all:
+        if units and d["cx"] - units[-1][-1]["cx"] < 0.008:
+            units[-1].append(d)
+        else:
+            units.append([d])
+    return units
+
+
+def _reseat_dampers(courses):
+    """Snap each damper unit onto its nearest new course and seat the felts.
+
+    The stand-in strings were ~3.2 mm thick and ~24 mm apart; the real courses
+    are thinner and at per-note positions, so each unit shifts sideways to the
+    nearest course center line and drops until its felt grazes the string top.
+    """
+    units = _damper_units()
+    if not units:
+        return None
+    moved, max_dx, max_dz = 0, 0.0, 0.0
+    shifts = {}                      # obj -> {vert_index: world shift}
+    for unit in units:
+        ux = sum(d["cx"] for d in unit) / len(unit)
+        uy = sum(d["cy"] for d in unit) / len(unit)
+        felt_zmin = min((d["zmin"] for d in unit if d["is_felt"]),
+                        default=min(d["zmin"] for d in unit))
+        crossing = []                # (course x, string top z) at the unit's y
+        for c in courses:
+            F, R, r = c["F"], c["R"], c["r"]
+            t = (uy - F.y) / (R.y - F.y)
+            if not (0.0 <= t <= 1.0):
+                continue
+            crossing.append((F.x + t * (R.x - F.x), F.z + t * (R.z - F.z) + r))
+        if not crossing:
+            continue
+        nearest_x = min(crossing, key=lambda cz: abs(cz[0] - ux))[0]
+        dx = max(-0.012, min(0.012, nearest_x - ux))
+        # Seat on the highest course under the footprint (overstrung crossings:
+        # the felt must not sink through the upper string layer).
+        under = [z for cx, z in crossing if abs(cx - (ux + dx)) <= 0.011]
+        dz = (max(under) + 0.0002) - felt_zmin
+        shift = Vector((dx, 0.0, dz))
+        for d in unit:
+            dest = shifts.setdefault(d["obj"].name, {})
+            for i in d["idx"]:
+                dest[i] = shift
+        moved += 1
+        max_dx = max(max_dx, abs(dx))
+        max_dz = max(max_dz, abs(dz))
+    for name, table in shifts.items():
+        obj = bpy.data.objects[name]
+        inv = obj.matrix_world.inverted().to_3x3()
+        me = obj.data
+        for i, shift in table.items():
+            me.vertices[i].co += inv @ shift
+        me.update()
+    return {"units": moved, "max_dx_mm": round(max_dx * 1000, 2),
+            "max_dz_mm": round(max_dz * 1000, 2)}
+
+
+def build():
+    keys = action_mod._keys_sorted()
+    meas = action_mod._measure(keys)
+    plan = action_mod._plan(keys, meas)
+    a, b = plan["line"]
+
+    bass, main = _string_samples()
+    bass_anchors = [_anchor_x(F, R, a, b)[0] for F, R in bass]
+    main_anchors = [_anchor_x(F, R, a, b)[0] for F, R in main]
+
+    old = bpy.data.objects.get(OUTPUT)
+    if old is not None:
+        me = old.data
+        bpy.data.objects.remove(old, do_unlink=True)
+        if me.users == 0:
+            bpy.data.meshes.remove(me)
+
+    src = bpy.data.objects[SOURCE]
+    copper = src.data.materials[0] if src.data.materials else None
+    steel = _steel_material()
+
+    verts, faces, fmats = [], [], []
+    counts = {"mono": 0, "bi": 0, "tri": 0}
+    courses = []
+    for n in plan["notes"]:
+        note, x = n["note"], n["x"]
+        sec = _section_of(note)
+        spec = SECTIONS[sec]
+        fan, anchors = (bass, bass_anchors) if sec != "tri" else (main, main_anchors)
+        F, R = _course_endpoints(fan, anchors, x)
+        # Gauge tapers across each section's note range.
+        lo = 21 if sec == "mono" else (MONO_TOP + 1 if sec == "bi" else BREAK_NOTE)
+        hi = MONO_TOP if sec == "mono" else (BREAK_NOTE - 1 if sec == "bi" else 108)
+        t = (note - lo) / max(hi - lo, 1)
+        r = spec["r"][0] * (1 - t) + spec["r"][1] * t
+        # Unisons sit side by side, perpendicular to the string in plan view.
+        d = (R - F)
+        perp = Vector((-d.y, d.x, 0.0)).normalized()
+        m = spec["count"]
+        for k in range(m):
+            off = perp * (spec["spread"] * (k - (m - 1) / 2.0))
+            _hex_string(verts, faces, fmats, F + off, R + off, r,
+                        COPPER if sec != "tri" else STEEL)
+        counts[sec] += m
+        courses.append({"note": note, "F": F, "R": R, "r": r})
+
+    me = bpy.data.meshes.new(OUTPUT)
+    me.from_pydata([tuple(v) for v in verts], [], faces)
+    me.materials.append(copper)
+    me.materials.append(steel)
+    for poly, mi in zip(me.polygons, fmats):
+        poly.material_index = mi
+    me.validate()
+    me.update()
+    obj = bpy.data.objects.new(OUTPUT, me)
+    coll = src.users_collection[0] if src.users_collection else bpy.context.scene.collection
+    coll.objects.link(obj)
+
+    # Retire the 51 stand-ins: hidden here, stripped from the GLB export.
+    src.hide_viewport = True
+    src.hide_render = True
+    src[REPLACED_PROP] = 1
+
+    dampers = _reseat_dampers(courses)
+
+    return {
+        "courses": 88,
+        "strings": sum(counts.values()),
+        "mono": counts["mono"],
+        "bi": counts["bi"],
+        "tri": counts["tri"],
+        "verts": len(verts),
+        "bass_fan": len(bass),
+        "main_fan": len(main),
+        "dampers": dampers,
+    }

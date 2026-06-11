@@ -83,6 +83,21 @@ def _strip_action(keep):
     return removed
 
 
+def _strip_replaced():
+    """Drop retired stand-in meshes (e.g. the 51 fat strings ``Strings_Full``
+    superseded); they are hidden in the .blend but would leak into the GLB."""
+    import bpy
+
+    removed = []
+    for obj in list(bpy.data.objects):
+        if obj.type == "MESH" and obj.get("steinway_replaced"):
+            removed.append(obj.name)
+            bpy.data.objects.remove(obj, do_unlink=True)
+    if removed:
+        print(f"[export] replaced stand-ins stripped: {', '.join(removed)}")
+    return removed
+
+
 def _is_bench(obj):
     return obj.name in ("Seat Cushion", "Seat Frame", "Piano_Bench")
 
@@ -439,6 +454,7 @@ def main():
     t0 = time.time()
     _strip_lid_hinge()
     _strip_action(keep="--with-action" in _argv_after_double_dash())
+    _strip_replaced()
     stripped = _strip_scene_props()
     _remove_bench()
     _remove_bench_legs()

@@ -7,6 +7,34 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 The version here tracks `version` in
 `extension/steinway_midi_piano/blender_manifest.toml`.
 
+## [0.6.0] - 2026-06-10
+
+### Added
+- **Full 88-course string set.** The imported model carried only 51 identical
+  ~3.2 mm copper stand-in strings (one per decorative damper). `build/strings.py`
+  replaces them with a complete scale that follows the model's own fan (each new
+  course interpolates the originals' pin-end/hitch-end geometry, so it lands on
+  the same pin field and hitch line): 10 wound copper monochords (A0–F#1),
+  19 wound bichords up to the model's physical section break at C#3, and 59
+  plain-steel trichords above it — 225 strings, every course anchored at its
+  key's x on the strike line so each hammer sits under its own unisons.
+  Dimensionally the piano measures 1.77 m × 1.50 m — a **Steinway Model O**
+  ("Living Room Grand", 5′10¾″) footprint — and is strung accordingly.
+  Headless: `scripts/build_strings.py` (`--out` saves; dry run verifies).
+- **Damper re-seating.** The 51 decorative damper units (clustered from the
+  joined `Dampers Tops`/`Bottoms` meshes) are snapped sideways onto their
+  nearest new course and dropped/raised so the felt grazes the actual string
+  top — seating on the *highest* course under the footprint so nothing sinks
+  through the upper layer at the overstrung crossing.
+
+### Changed
+- The 51 stand-in strings stay in the .blend (hidden, tagged
+  `steinway_replaced`) as the measurement source of truth;
+  `scripts/export_glb.py` strips tagged stand-ins so only `Strings_Full`
+  reaches the web GLB (where it joins `Piano_Static` as usual).
+- The action builder's strike-height raycast now also includes `Strings_Full`
+  when present.
+
 ## [0.5.0] - 2026-06-10
 
 ### Added
