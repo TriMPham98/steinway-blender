@@ -98,6 +98,17 @@ def _strip_replaced():
     return removed
 
 
+def _unhide_all():
+    """Clear hide flags so view-hidden keepers (e.g. the decorative damper
+    meshes, which stand in for the stripped moving dampers) join and export."""
+    import bpy
+
+    for obj in bpy.data.objects:
+        obj.hide_viewport = False
+        obj.hide_render = False
+        obj.hide_set(False)
+
+
 def _is_bench(obj):
     return obj.name in ("Seat Cushion", "Seat Frame", "Piano_Bench")
 
@@ -455,6 +466,7 @@ def main():
     _strip_lid_hinge()
     _strip_action(keep="--with-action" in _argv_after_double_dash())
     _strip_replaced()
+    _unhide_all()
     stripped = _strip_scene_props()
     _remove_bench()
     _remove_bench_legs()

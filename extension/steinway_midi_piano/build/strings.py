@@ -50,6 +50,8 @@ SECTIONS = {
 
 STEEL_MAT = "Strings_Steel"
 COPPER, STEEL = 0, 1
+PIN_R = 0.0032           # tuning pin radius (build/harp.py builds the pins)
+WEB_Z = (0.868, 0.882)   # the plate's flat pin-field TOP surface
 
 
 def _section_of(note):
@@ -72,7 +74,7 @@ def _string_samples():
     if obj is None or obj.type != "MESH":
         raise RuntimeError(f"'{SOURCE}' mesh not found - open the Steinway model")
     me = obj.data
-    mw = obj.matrix_world
+    mw = action_mod._world_matrix(obj)
     comps = retarget._components(me)
     if len(comps) < 10:
         raise RuntimeError(f"'{SOURCE}' split into {len(comps)} strings - unexpected model")
@@ -162,7 +164,7 @@ def _damper_units():
         obj = bpy.data.objects.get(name)
         if obj is None or obj.type != "MESH":
             return []
-        mw = obj.matrix_world
+        mw = action_mod._world_matrix(obj)
         me = obj.data
         for c in retarget._components(me):
             pts = [mw @ me.vertices[i].co for i in c]
@@ -225,7 +227,7 @@ def _reseat_dampers(courses):
         max_dz = max(max_dz, abs(dz))
     for name, table in shifts.items():
         obj = bpy.data.objects[name]
-        inv = obj.matrix_world.inverted().to_3x3()
+        inv = action_mod._world_matrix(obj).inverted().to_3x3()
         me = obj.data
         for i, shift in table.items():
             me.vertices[i].co += inv @ shift
@@ -234,15 +236,90 @@ def _reseat_dampers(courses):
             "max_dz_mm": round(max_dz * 1000, 2)}
 
 
-def build():
+def _plate_bvh():
+    obj = bpy.data.objects.get("Brass_Sound_Works.002")
+    if obj is None or obj.type != "MESH":
+        return None
+    from mathutils.bvhtree import BVHTree
+    mw = action_mod._world_matrix(obj)
+    return BVHTree.FromPolygons(
+        [tuple(mw @ v.co) for v in obj.data.vertices],
+        [tuple(p.vertices) for p in obj.data.polygons])
+
+
+def _pin_stag(bvh, front, dirxy, base):
+    """Pin distance along the string, slid until the pin stands on flat web.
+
+    The plate's pin field carries raised bars and strut bases; a pin placed
+    into one clips through the gold. Probe the surface under each candidate
+    spot and keep sliding along the string until it reads as the flat web.
+    """
+    if bvh is None:
+        return base
+    down = Vector((0.0, 0.0, -1.0))
+    for extra in (0.0, 0.004, 0.008, 0.012, 0.016, 0.020, 0.024,
+                  0.028, -0.004, 0.032, 0.036, 0.040, 0.044,
+                  0.048, 0.052, 0.056, 0.060, 0.064):
+        stag = base + extra
+        if stag < 0.006:
+            continue
+        p = front - dirxy * (stag + PIN_R)
+        hit = bvh.ray_cast(Vector((p.x, p.y, 0.93)), down, 0.12)
+        if hit[0] is not None and WEB_Z[0] <= hit[0].z <= WEB_Z[1]:
+            return stag
+    return base
+
+
+def course_lines():
+    """Per-note course geometry, shared by strings, pins, and the damper action.
+
+    Returns a list of dicts: ``note``, ``F``/``R`` (course center front/rear),
+    ``r`` (string radius), ``sec``, and ``unisons`` - one ``(F_k, R_k)`` segment
+    per physical string, with the front end extended toward its (staggered,
+    flat-web-verified) tuning-pin position over the plate's pin field.
+    """
     keys = action_mod._keys_sorted()
     meas = action_mod._measure(keys)
     plan = action_mod._plan(keys, meas)
     a, b = plan["line"]
+    bvh = _plate_bvh()
 
     bass, main = _string_samples()
     bass_anchors = [_anchor_x(F, R, a, b)[0] for F, R in bass]
     main_anchors = [_anchor_x(F, R, a, b)[0] for F, R in main]
+
+    courses = []
+    for n in plan["notes"]:
+        note, x = n["note"], n["x"]
+        sec = _section_of(note)
+        spec = SECTIONS[sec]
+        fan, anchors = (bass, bass_anchors) if sec != "tri" else (main, main_anchors)
+        F, R = _course_endpoints(fan, anchors, x)
+        # Gauge tapers across each section's note range.
+        lo = 21 if sec == "mono" else (MONO_TOP + 1 if sec == "bi" else BREAK_NOTE)
+        hi = MONO_TOP if sec == "mono" else (BREAK_NOTE - 1 if sec == "bi" else 108)
+        t = (note - lo) / max(hi - lo, 1)
+        r = spec["r"][0] * (1 - t) + spec["r"][1] * t
+        # Unisons sit side by side, perpendicular to the string in plan view;
+        # the front of each extends to its pin row (pins stagger like a real
+        # pin field so 3.2 mm pins fit strings only ~3 mm apart).
+        d = (R - F)
+        dirxy = Vector((d.x, d.y, 0.0)).normalized()
+        perp = Vector((-d.y, d.x, 0.0)).normalized()
+        m = spec["count"]
+        unisons = []
+        for k in range(m):
+            off = perp * (spec["spread"] * (k - (m - 1) / 2.0))
+            stag = _pin_stag(bvh, F + off, dirxy,
+                             0.008 + 0.014 * ((note + k) % 3))
+            unisons.append((F + off - dirxy * stag, R + off))
+        courses.append({"note": note, "F": F, "R": R, "r": r, "sec": sec,
+                        "unisons": unisons})
+    return courses
+
+
+def build():
+    courses = course_lines()
 
     old = bpy.data.objects.get(OUTPUT)
     if old is not None:
@@ -257,28 +334,12 @@ def build():
 
     verts, faces, fmats = [], [], []
     counts = {"mono": 0, "bi": 0, "tri": 0}
-    courses = []
-    for n in plan["notes"]:
-        note, x = n["note"], n["x"]
-        sec = _section_of(note)
-        spec = SECTIONS[sec]
-        fan, anchors = (bass, bass_anchors) if sec != "tri" else (main, main_anchors)
-        F, R = _course_endpoints(fan, anchors, x)
-        # Gauge tapers across each section's note range.
-        lo = 21 if sec == "mono" else (MONO_TOP + 1 if sec == "bi" else BREAK_NOTE)
-        hi = MONO_TOP if sec == "mono" else (BREAK_NOTE - 1 if sec == "bi" else 108)
-        t = (note - lo) / max(hi - lo, 1)
-        r = spec["r"][0] * (1 - t) + spec["r"][1] * t
-        # Unisons sit side by side, perpendicular to the string in plan view.
-        d = (R - F)
-        perp = Vector((-d.y, d.x, 0.0)).normalized()
-        m = spec["count"]
-        for k in range(m):
-            off = perp * (spec["spread"] * (k - (m - 1) / 2.0))
-            _hex_string(verts, faces, fmats, F + off, R + off, r,
+    for c in courses:
+        sec = c["sec"]
+        for F_k, R_k in c["unisons"]:
+            _hex_string(verts, faces, fmats, F_k, R_k, c["r"],
                         COPPER if sec != "tri" else STEEL)
-        counts[sec] += m
-        courses.append({"note": note, "F": F, "R": R, "r": r})
+        counts[sec] += len(c["unisons"])
 
     me = bpy.data.meshes.new(OUTPUT)
     me.from_pydata([tuple(v) for v in verts], [], faces)
@@ -293,20 +354,17 @@ def build():
     coll.objects.link(obj)
 
     # Retire the 51 stand-ins: hidden here, stripped from the GLB export.
-    src.hide_viewport = True
-    src.hide_render = True
+    action_mod._hide_keep(src)
     src[REPLACED_PROP] = 1
 
     dampers = _reseat_dampers(courses)
 
     return {
-        "courses": 88,
+        "courses": len(courses),
         "strings": sum(counts.values()),
         "mono": counts["mono"],
         "bi": counts["bi"],
         "tri": counts["tri"],
         "verts": len(verts),
-        "bass_fan": len(bass),
-        "main_fan": len(main),
         "dampers": dampers,
     }

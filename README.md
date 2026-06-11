@@ -73,6 +73,8 @@ down faster the harder you strike — and the sustain pedal tips when you hold C
 | `build/retarget.py` | splits the imported `White Keys`/`Black Keys` meshes into 88 objects `Key.021…Key.108` (origins at the rear hinge, tagged `midi_note`/`key_color`); re-origins + tags `Right Sustain Pedal`; centers the logo + tidies collection names |
 | `build/action.py` | builds the 88-note **double-escapement action** (`Steinway_Action` collection): measures string/damper fronts per note, fits the action line, cuts the soundboard's belly-rail gap, and rigs key arms → wippens → jacks/repetition levers → hammers with simple-expression drivers off each key's rotation (plus a `Key["hammer"]` strike channel) |
 | `build/strings.py` | replaces the model's 51 stand-in strings with the **full 88-course set** (`Strings_Full`: wound mono/bichords + steel trichords on the model's own fan — a Steinway Model O footprint) and re-seats the decorative damper units on the new courses |
+| `build/harp.py` | opens the plate's **bays** at the capo line (the imported plate was solid under the strike band) and fits **one tuning pin per string** + per-course hitch pins |
+| `build/case.py` | adds the missing **nameboard**, hinges the **fallboard**, and rigs the **lid** (spine + front-flap fold); controls: scene props `fallboard_open` / `lid_open` / `lid_flap_fold` |
 | `build/_geom.py` | collection helpers used by the retarget step |
 | `midi.py` | `mido` wrapper; drains note on/off + CC64 non-blocking via `iter_pending()` |
 | `anim.py` | per-key velocity-driven spring-damper about local +X (hard strikes snap down fast, crisp key-bed bottom-out, snappy release); fires the hammer strike impulse as a struck key sweeps down; tips the tagged pedal on sustain |
@@ -93,12 +95,10 @@ $B --background assets/SteinwayGrandPiano.blend --python scripts/prepare_model.p
 # also bake a ready-to-play file (the source is opened read-only):
 $B --background assets/SteinwayGrandPiano.blend --python scripts/prepare_model.py -- \
    --out assets/steinway_grand_playable.blend
-# build + verify the double-escapement action (drop --out for a dry run):
-$B --background assets/steinway_grand_playable.blend --python scripts/build_action.py -- \
+# complete the model in one shot (strings -> harp/pins -> action+dampers -> case):
+$B --background assets/steinway_grand_playable.blend --python scripts/build_all.py -- \
    --out assets/steinway_grand_playable.blend
-# replace the 51 stand-in strings with the full 88-course set + re-seat dampers:
-$B --background assets/steinway_grand_playable.blend --python scripts/build_strings.py -- \
-   --out assets/steinway_grand_playable.blend
+# (scripts/build_strings.py and scripts/build_action.py run individual steps)
 # hermetic splitter + anim self-test, no hardware or model needed:
 $B --background --python scripts/selftest.py
 bash scripts/build_wheel.sh                                  # (re)build the python-rtmidi wheel
@@ -109,13 +109,14 @@ bash scripts/build_wheel.sh                                  # (re)build the pyt
 
 ## Scope / roadmap
 
-v0.5 drives **velocity-sensitive keys, a sustain-pedal tilt, and the full
-double-escapement hammer action**: keys follow your fingers with a spring-damper
-whose attack speed tracks how hard you play, the pedal moves with CC64, and each
-key's wippen/jack/repetition-lever/hammer train follows it kinematically —
-hammers fly to the strings on a strike, drop to the check, and the jack escapes
-at let-off. Still planned: **damper motion** (so sustain visually holds notes),
-velocity-driven glow, and keyframe recording for rendered video.
+v0.7 drives **velocity-sensitive keys, the full double-escapement hammer
+action, and the damper action**: keys follow your fingers with a spring-damper
+whose attack speed tracks how hard you play; each key's
+wippen/jack/repetition-lever/hammer train follows it kinematically — hammers
+fly through the opened plate bays to the strings, drop to the check, the jack
+escapes at let-off — and each key lifts its own damper, with **CC64 lifting
+them all** (sustain you can see). Still planned: velocity-driven glow and
+keyframe recording for rendered video.
 
 ## Troubleshooting
 

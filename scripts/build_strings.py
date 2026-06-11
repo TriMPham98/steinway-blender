@@ -32,7 +32,6 @@ def main():
     print(f"[strings] courses      : {summary['courses']}")
     print(f"[strings] strings      : {summary['strings']} "
           f"(mono={summary['mono']} bi={summary['bi']} tri={summary['tri']})")
-    print(f"[strings] fan samples  : bass={summary['bass_fan']} main={summary['main_fan']}")
     print(f"[strings] dampers      : {summary['dampers']}")
 
     assert summary["courses"] == 88, "expected a course for every note"

@@ -7,6 +7,66 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 The version here tracks `version` in
 `extension/steinway_midi_piano/blender_manifest.toml`.
 
+## [0.7.1] - 2026-06-11
+
+### Fixed
+- **Tuning pins no longer clip the plate.** The plate is a closed ~28 mm slab:
+  its visible top surface sits at z ≈ 0.872-0.878, not the 0.850 underside
+  sheet the pins were seated on (burying them). Each pin now stands on its
+  probed local surface, and the pin-stagger search (in `strings.course_lines`)
+  slides along the string until the spot reads as flat field - pins that can't
+  find flat field stand *on* the raised bar instead of inside it.
+- **Damper heads no longer clip the plate bars, and the row is even.** The
+  clearance test now only counts plate geometry passing *through* the head's
+  z-range (the gold top skin below the felts was a false positive that made
+  the dodge shuffle heads pointlessly - the unevenness). Head depths taper
+  like a real grand's (45 mm bass -> 28 mm treble), which also lets the treble
+  heads fit between the hammer line and the bays' rear border bar; the dodge
+  is footprint-aware, never slides into the hammer's strike zone, and the
+  builder reports any residual contact (currently none).
+
+## [0.7.0] - 2026-06-11
+
+### Added
+- **Real strikes on real strings.** `build/harp.py` opens the plate's bays: the
+  imported `Brass_Sound_Works.002` modeled its front section as one solid n-gon
+  reaching under the whole strike and damper bands; it is now bisected along
+  the capo line (just in front of the strike line) so hammers fly through open
+  air to the strings, exactly like the real plate. The hammer stack rose back
+  to full height (~45 mm blow) and the strike line moved to a true ~1/8
+  speaking-length setback instead of hugging the string fronts (the "backwards
+  hammers" look). Per-note let-off still stops just short of each string.
+- **Per-note damper action with sustain.** Notes 21-88 get a damper head riding
+  its own course (felt seated on the strings, dodging plate struts along the
+  course), a wire cranked back over the shanks and down behind the hammershank
+  rail, and (notes 21-81) an underlever lifted by the key arm's tail - the
+  treble bridge sits too close for the wire slot above that, so the top heads
+  ride stub wires. A pressed key lifts its damper from ~40% travel; the
+  **sustain pedal (CC64) lifts them all** plus the lift tray, with no animator
+  changes (drivers read the pedal's rotation). The 51 decorative damper units
+  stay hidden for the web export.
+- **Full pin set.** One tuning pin per string (225, staggered rows, with every
+  string's front extended to its pin) and one hitch pin per course (88);
+  the old 51-string pin field is hidden and tagged replaced.
+- **Functional case.** `build/case.py` adds the missing **nameboard** behind
+  the fallboard, re-origins the **fallboard** onto its hinge, and rigs the
+  **lid** (spine hinge + front-flap fold empties). Controls are scene
+  properties (`fallboard_open`, `lid_open`, `lid_flap_fold`) - scene-level
+  because self-prop drivers are dependency cycles that evaluate
+  nondeterministically. `scripts/build_all.py` runs everything in order.
+
+### Changed
+- Even rows: hammers and dampers sit exactly on the fitted action line
+  (per-note measurement jitter no longer staggers them), key-arm slabs fill
+  the keybed to neighbor midpoints with 0.5 mm kerfs, and every arm tail ends
+  on one line.
+- The deeper soundboard slot for the damper wires is an L-shaped carve
+  (versioned `steinway_action_cut = 2`), bounded at x = 0.428 where the treble
+  bridge approaches.
+- Builders no longer rely on `matrix_world` of hidden stand-ins (it reads as
+  identity for depsgraph-excluded objects on a fresh load) and hide retired
+  meshes with the eye flag instead of the viewport-disable flag.
+
 ## [0.6.0] - 2026-06-10
 
 ### Added

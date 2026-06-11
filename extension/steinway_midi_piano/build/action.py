@@ -49,8 +49,8 @@ from mathutils import Vector
 PRESS_ANGLE = math.radians(3.5)     # full key dip the drivers normalize against
 Q = 1.0 / PRESS_ANGLE               # rot_x -> press fraction
 
-CAP_RISE = 0.0051        # capstan rise at full press (uniform across notes)
-STRIKE_SETBACK = 0.018   # preferred strike distance behind the string front end
+CAP_RISE = 0.00933       # capstan rise at full press (uniform across notes)
+STRIKE_FRAC = 0.09       # strike point as a fraction of the string's length
 
 # Stations as offsets from the fitted action line ``yl`` (the capstan line).
 W_PIVOT_DY = -0.105      # wippen flange pivot (support rail)
@@ -61,38 +61,56 @@ SCREW_DY = 0.088         # drop screw (above the repetition-lever tail)
 FLANGE_DY = 0.115        # hammershank flange pivot (hammer rail)
 RAIL_DY = 0.127          # hammer rail beam center
 
-# Vertical stack. The model's brass plate has a solid web at z = 0.850 under the
-# whole string band, so the hammers strike its underside (from the cavity that
-# surface *is* the strings); the stack is compressed to fit between the key arms
-# (~0.73) and that ceiling while keeping every contact at a believable height.
+# Damper action stations (offsets from the fitted strike line; dampers exist
+# for notes 21..88 like a real grand, with the underlever linkage up to
+# DAMPER_LINK_TOP - above that the bridge sits too close for the wire slot and
+# the heads ride short stub wires instead).
+DAMPER_TOP = 88
+DAMPER_LINK_TOP = 81
+HEAD_DY = 0.042          # damper head center behind the strike line
+WIRE_DY = 0.139          # vertical wire drop (behind the hammershank rail)
+DLEVER_DY = 0.184        # damper underlever pivot
+DCONTACT_DY = 0.129      # key-arm felt -> underlever contact
+DRAIL_DY = 0.1975        # damper underlever rail beam center
+DTRAY_DY = 0.133         # sustain lift tray beam center
+DLEVER_Z = 0.7395        # underlever pivot height (key tails step to one level)
+DGAP = 0.0048            # contact gap -> dampers pick up at ~40% key travel
+DPEDAL_LIFT = 0.0055     # damper lift at full sustain pedal
+PEDAL_Q = 1.0 / math.radians(5.0)   # pedal rot -> press fraction (anim.PEDAL_ANGLE)
+
+# Vertical stack (the plate's bays are opened by build/harp.py, so hammers
+# reach the actual strings at z ~0.885-0.893).
 W_PIVOT_Z = 0.7605       # wippen pivot height
 JACK_PIVOT_Z = 0.7705
 LEVER_PIVOT_Z = 0.7745
-FLANGE_Z = 0.804         # hammershank pivot height
+FLANGE_Z = 0.8175        # hammershank pivot height
 CAP_TOP_Z = 0.7495       # capstan top = wippen heel felt at rest
-HEAD_TOP = 0.022         # felt crown above the shank center line
+HEAD_TOP = 0.026         # felt crown above the shank center line
 HEAD_REST_TOP_Z = FLANGE_Z + HEAD_TOP
 
 # Driver gains, derived so every contact stays consistent through the stroke:
 #   wippen:    OMEGA * 0.105 == CAP_RISE  (heel rides the capstan exactly)
-#   jack:      toe (19.5 mm ahead of its pivot, station 160.5 mm) pinned on the
+#   jack:      toe (13 mm ahead of its pivot, station 167 mm) pinned on the
 #              let-off button from q = JACK_Q0 -> tip kicks out from the knuckle
 #   rep lever: saddle stopped by the drop screw from q = LEVER_Q0 so the falling
 #              knuckle lands on it at full press (the double-escapement "check")
 #   hammer:    knuckle lift / 40 mm knuckle radius, capped at a per-note let-off
 #              just short of its strike height, then DROP rad down onto the lever
-OMEGA = CAP_RISE / abs(W_PIVOT_DY)            # 0.0486 rad at full press
+OMEGA = CAP_RISE / abs(W_PIVOT_DY)            # 0.0889 rad at full press
 JACK_GAIN = OMEGA * 0.167 / 0.013             # toe station / toe arm
 JACK_Q0 = 0.85
 LEVER_GAIN = OMEGA * 0.193 / 0.048            # screw station / screw arm
-LEVER_Q0 = 0.915
+LEVER_Q0 = 0.879
 HAM_SLOPE = OMEGA * 0.180 / 0.040             # jack station / knuckle radius
-HAM_DROP = 0.020
-HAM_IMPULSE = 0.25                            # gain on the live key["hammer"]
+HAM_DROP = 0.026
+HAM_IMPULSE = 0.45                            # gain on the live key["hammer"]
 
 SOUNDBOARD = "Soundboard"
-CUT_MARGIN = 0.032       # soundboard removed for y < action line + this margin
+CUT_MARGIN = 0.082       # soundboard removed for y < strike line + this margin
+CUT_DEEP = 0.150         # extra slot for the damper wires (bass of CUT_DEEP_X)
+CUT_DEEP_X = 0.428       # the treble bridge sits too close beyond this x
 CUT_MARK = "steinway_action_cut"
+CUT_VERSION = 2
 
 COLLECTION = "Steinway_Action"
 PART_PROP = "action_part"
@@ -100,9 +118,11 @@ NOTE_PROP = "action_note"
 
 # Meshes the hammers must clear from below (strike-height raycast targets).
 # "Strings_Full" is the rebuilt 88-course set (build/strings.py), present once
-# that step has run; missing names are skipped.
+# that step has run; missing names are skipped. The retired stand-ins (old
+# fat strings / 51-string pin field) are deliberately absent - they no longer
+# represent the model.
 _OBSTACLES = (
-    "Strings", "Strings_Full", "String Pins", "Dampers Bottoms", "Dampers Tops",
+    "Strings_Full", "Dampers Bottoms", "Dampers Tops",
     "Brass_Sound_Works.001", "Brass_Sound_Works.002",
     "String Supports-01", "String Supports-02", SOUNDBOARD,
 )
@@ -228,11 +248,34 @@ def _keys_sorted():
         raise RuntimeError(f"expected 88 tagged keys, found {len(keys)} - prepare the model first")
     return keys
 
+def _world_matrix(obj):
+    """Object-to-world matrix that survives viewport-disabled objects.
+
+    ``matrix_world`` is never evaluated for objects excluded from the
+    depsgraph (e.g. hidden stand-ins on a fresh file load) and reads as
+    identity; rebuild it from the local transform instead. The measured
+    stand-ins are all unparented.
+    """
+    if obj.parent is None:
+        return obj.matrix_basis.copy()
+    return obj.matrix_world
+
+
+def _hide_keep(obj):
+    """Hide a stand-in without knocking it out of the depsgraph."""
+    obj.hide_render = True
+    obj.hide_viewport = False        # heals files saved with the breaking flag
+    try:
+        obj.hide_set(True)
+    except RuntimeError:             # not in the active view layer
+        pass
+
+
 def _world_verts(name):
     obj = bpy.data.objects.get(name)
     if obj is None or obj.type != "MESH":
         return []
-    mw = obj.matrix_world
+    mw = _world_matrix(obj)
     return [mw @ v.co for v in obj.data.vertices]
 
 
@@ -276,15 +319,18 @@ def _clean_series(vals, lo, hi):
 def _measure(keys):
     sbins, sw = _xbins(_world_verts("Strings"))
     dbins, dw = _xbins(_world_verts("Dampers Bottoms"))
-    s_front, d_front = [], []
+    s_front, s_rear, d_front = [], [], []
     for key in keys:
         x = key.location.x
         sv = [v for v in _near_x(sbins, sw, x) if v.y < -0.30]
         s_front.append(min((v.y for v in sv), default=None))
+        rv = _near_x(sbins, sw, x)
+        s_rear.append(max((v.y for v in rv), default=None))
         dv = [v for v in _near_x(dbins, dw, x) if v.y < -0.30]
         d_front.append(min((v.y for v in dv), default=None))
     return {
         "s_front": _clean_series(s_front, -0.62, -0.40),
+        "s_rear": _clean_series(s_rear, -0.35, 0.85),
         "d_front": _clean_series(d_front, -0.55, -0.40),
     }
 
@@ -298,19 +344,29 @@ def _fit_line(xs, ys):
 
 
 def _plan(keys, meas):
-    """Per-note geometry: action line, strike target, arm lengths, driver gains."""
+    """Per-note geometry: action line, strike target, arm lengths, driver gains.
+
+    The strike point sits a real fraction of each string's length behind its
+    front end (~1/8 of the speaking length), clamped to stay just in front of
+    the decorative damper line and on the string at the squeezed treble.
+    """
     xs = [k.location.x for k in keys]
-    prefer = [
-        min(sf + STRIKE_SETBACK, df - 0.0085)
-        for sf, df in zip(meas["s_front"], meas["d_front"])
-    ]
+    prefer = []
+    for sf, sr, df in zip(meas["s_front"], meas["s_rear"], meas["d_front"]):
+        s = sf + STRIKE_FRAC * (sr - sf)
+        s = min(s, df - 0.0085)
+        prefer.append(max(s, sf + 0.004))
     a, b = _fit_line(xs, prefer)
     plan = []
     for i, key in enumerate(keys):
         x = key.location.x
         yl = a + b * x                                   # action (capstan) line
-        s = min(max(prefer[i], meas["s_front"][i] + 0.001), meas["d_front"][i] - 0.0080)
-        s = min(max(s, yl + FLANGE_DY - 0.135), yl + FLANGE_DY - 0.095)
+        # The hammer/damper rows sit exactly on the fitted line: per-note
+        # measurement jitter would read as a ragged action.
+        s = yl
+        # Arm slabs fill the keybed to neighbor midpoints (0.5 mm kerfs).
+        x_lo = (xs[i - 1] + x) / 2.0 + 0.0005 if i > 0 else x - 0.0068
+        x_hi = (x + xs[i + 1]) / 2.0 - 0.0005 if i < 87 else x + 0.0068
         hinge_y, hinge_z = key.location.y, key.location.z
         arm = yl - hinge_y
         plan.append({
@@ -320,6 +376,7 @@ def _plan(keys, meas):
             "x": x, "yl": yl, "s": s,
             "hinge_y": hinge_y, "hinge_z": hinge_z,
             "arm": arm,
+            "arm_x0": x_lo, "arm_x1": x_hi,
             "psi": CAP_RISE / arm,
             "shank": (yl + FLANGE_DY) - s,
             "s_front": meas["s_front"][i],
@@ -332,34 +389,52 @@ def _plan(keys, meas):
 # Soundboard cut (the model's slab extends under the strike zone)
 # --------------------------------------------------------------------------- #
 def _cut_soundboard(plan):
+    """Carve the action gap: an L-shaped region (deeper where the damper wires
+    drop, bounded at CUT_DEEP_X where the treble bridge approaches) is removed
+    from the imported slab, which extends under the strike zone where a real
+    piano has open air down to the keybed."""
     sb = bpy.data.objects.get(SOUNDBOARD)
     if sb is None:
         return "missing"
-    if sb.get(CUT_MARK):
+    if sb.get(CUT_MARK, 0) == CUT_VERSION:
         return "already-cut"
     a, b = plan["line"]
-    # Plane through the diagonal y = (a + CUT_MARGIN) + b*x, normal facing rear
-    # (+y side kept); clear_inner removes the front part under the action.
-    p0 = Vector((0.0, a + CUT_MARGIN, 0.8))
-    no_w = Vector((-b, 1.0, 0.0)).normalized()
     mw = sb.matrix_world
-    co_l = mw.inverted() @ p0
-    no_l = (mw.to_3x3().transposed() @ no_w).normalized()
+    inv = mw.inverted()
+    nrm = mw.to_3x3().transposed()
+
     bm = bmesh.new()
     bm.from_mesh(sb.data)
-    res = bmesh.ops.bisect_plane(
-        bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:],
-        plane_co=co_l, plane_no=no_l,
-        clear_inner=True, clear_outer=False,
+    # Score the slab along both diagonal lines and the x boundary (no clears),
+    # then drop every face whose center lies in the union region; shared verts
+    # survive a FACES-context delete and the open edges get re-filled.
+    planes = (
+        (Vector((0.0, a + CUT_MARGIN, 0.8)), Vector((-b, 1.0, 0.0))),
+        (Vector((0.0, a + CUT_DEEP, 0.8)), Vector((-b, 1.0, 0.0))),
+        (Vector((CUT_DEEP_X, 0.0, 0.8)), Vector((1.0, 0.0, 0.0))),
     )
-    cut_edges = [e for e in res["geom_cut"] if isinstance(e, bmesh.types.BMEdge)]
-    if cut_edges:
-        bmesh.ops.holes_fill(bm, edges=cut_edges)
+    for co_w, no_w in planes:
+        bmesh.ops.bisect_plane(
+            bm, geom=bm.verts[:] + bm.edges[:] + bm.faces[:],
+            plane_co=inv @ co_w, plane_no=(nrm @ no_w).normalized(),
+        )
+    bm.faces.ensure_lookup_table()
+    doomed = []
+    for f in bm.faces:
+        c = mw @ f.calc_center_median()
+        line = a + b * c.x
+        if c.y < line + CUT_MARGIN - 1e-5 or (
+                c.x < CUT_DEEP_X - 1e-5 and c.y < line + CUT_DEEP - 1e-5):
+            doomed.append(f)
+    bmesh.ops.delete(bm, geom=doomed, context="FACES")
+    edges = [e for e in bm.edges if e.is_boundary]
+    if edges:
+        bmesh.ops.holes_fill(bm, edges=edges)
     bm.to_mesh(sb.data)
     bm.free()
     sb.data.update()
-    sb[CUT_MARK] = 1
-    return "cut"
+    sb[CUT_MARK] = CUT_VERSION
+    return f"cut v{CUT_VERSION}"
 
 
 # --------------------------------------------------------------------------- #
@@ -368,23 +443,22 @@ def _cut_soundboard(plan):
 def _obstacle_bvh():
     from mathutils.bvhtree import BVHTree
 
-    deps = bpy.context.evaluated_depsgraph_get()
+    # Plain mesh reads (no modifiers on these), with depsgraph-proof matrices:
+    # hidden stand-ins keep contributing correct geometry.
     verts, polys = [], []
     for name in _OBSTACLES:
         obj = bpy.data.objects.get(name)
         if obj is None or obj.type != "MESH":
             continue
-        ev = obj.evaluated_get(deps)
-        me = ev.to_mesh()
-        mw = ev.matrix_world
+        mw = _world_matrix(obj)
+        me = obj.data
         base = len(verts)
         verts += [tuple(mw @ v.co) for v in me.vertices]
         polys += [tuple(base + i for i in p.vertices) for p in me.polygons]
-        ev.to_mesh_clear()
     return BVHTree.FromPolygons(verts, polys)
 
 
-def _min_clearance(bvh, x, s, z0=0.8265):
+def _min_clearance(bvh, x, s, z0=0.8445):
     up = Vector((0.0, 0.0, 1.0))
     zmin = 0.8895                       # default: just under the string band
     for dx in (-0.0035, 0.0, 0.0035):
@@ -411,22 +485,12 @@ def _strike_heights(plan):
     bvh = _obstacle_bvh()
     flagged = []
     for n in plan["notes"]:
-        flange_y = n["yl"] + FLANGE_DY
-        # Keep the head over the open head-slot in the soundboard and the shank
-        # believable; within that, nudge to wherever overhead clearance is best.
-        best_s, best_z = n["s"], -1.0
-        for dy in (0.0, 0.003, -0.003, 0.006, -0.006):
-            s = n["s"] + dy
-            if not (0.100 <= flange_y - s <= 0.130):
-                continue
-            z = _min_clearance(bvh, n["x"], s)
-            if z > best_z:
-                best_s, best_z = s, z
-        n["s"] = best_s
-        n["shank"] = flange_y - best_s
-        n["strike_z"] = best_z - 0.0008
+        # The head stays on the fitted strike line (an even hammer row); the
+        # raycast only caps how high it may fly under whatever crosses above.
+        n["shank"] = FLANGE_DY
+        n["strike_z"] = _min_clearance(bvh, n["x"], n["s"]) - 0.0008
         n["phi_cap"] = _phi_for_rise(n["shank"], n["strike_z"] - HEAD_REST_TOP_Z)
-        # Let-off just short of the strike (per note: shank lengths differ).
+        # Let-off just short of the strike (per note: strike heights differ).
         n["letoff"] = min(max(0.92 * n["phi_cap"] / HAM_SLOPE, 0.70), 0.92)
         if n["strike_z"] < HEAD_REST_TOP_Z + 0.015:
             flagged.append((n["note"], round(n["strike_z"], 4)))
@@ -451,8 +515,8 @@ def _wippen_buf():
 def _jack_buf():
     b = _Buf()
     b.box(-0.0045, 0.0045, -0.005, 0.005, -0.0055, 0.0, MAPLE)       # flange lugs
-    b.box(-0.00275, 0.00275, -0.0035, 0.0035, -0.003, 0.0175, MAPLE) # vertical arm
-    b.box(-0.00275, 0.00275, -0.0035, 0.0035, 0.0175, 0.0195, LEATHER)
+    b.box(-0.00275, 0.00275, -0.0035, 0.0035, -0.003, 0.0295, MAPLE) # vertical arm
+    b.box(-0.00275, 0.00275, -0.0035, 0.0035, 0.0295, 0.0315, LEATHER)
     b.box(-0.00275, 0.00275, -0.018, -0.0035, -0.0005, 0.005, MAPLE) # toe
     b.box(-0.00275, 0.00275, -0.017, -0.010, 0.005, 0.0062, FELT_RED)
     return b
@@ -470,7 +534,7 @@ def _lever_buf():
     for sx in (-1, 1):                                               # jack window
         b.box(sx * 0.0035, sx * 0.0055, 0.030, 0.046, 0.0065, 0.0085, MAPLE)
     for sx in (-1, 1):                                               # knuckle saddle
-        b.box(sx * 0.00375, sx * 0.0065, 0.030, 0.044, 0.0085, 0.015, MAPLE)
+        b.box(sx * 0.00375, sx * 0.0065, 0.030, 0.044, 0.0085, 0.0265, MAPLE)
     b.box(-0.0065, 0.0065, 0.046, 0.052, 0.0065, 0.0115, MAPLE)      # screw tail
     return b
 
@@ -479,31 +543,46 @@ def _hammer_buf(shank):
     b = _Buf()
     b.box(-0.0035, 0.0035, -0.010, 0.006, -0.005, 0.005, WALNUT)     # butt
     b.bar((0, -0.008, 0), (0, -(shank - 0.004), 0), 0.0032, MAPLE)   # shank
-    b.cyl("x", (-0.040, -0.010), 0.004, -0.0045, 0.0045, LEATHER)    # knuckle
+    b.cyl("x", (-0.040, -0.011), 0.0045, -0.0045, 0.0045, LEATHER)   # knuckle
     yc = -shank
     b.box(-0.0045, 0.0045, yc - 0.0045, yc + 0.0045, -0.014, 0.006, WALNUT)
-    felt = [(yc - 0.0048, 0.004), (yc - 0.0048, 0.0115), (yc - 0.0028, 0.0185),
-            (yc, HEAD_TOP), (yc + 0.0028, 0.0185), (yc + 0.0048, 0.0115),
+    felt = [(yc - 0.0048, 0.004), (yc - 0.0048, 0.013), (yc - 0.0030, 0.0215),
+            (yc, HEAD_TOP), (yc + 0.0030, 0.0215), (yc + 0.0048, 0.013),
             (yc + 0.0048, 0.004)]
     b.profile_x(felt, -0.0045, 0.0045, FELT)
     return b
 
 
 def _key_arm_buf(n):
-    """Hidden seesaw arm behind one key: slab + capstan + backcheck (world coords)."""
+    """Hidden seesaw arm behind one key: slab + capstan + backcheck, extended to
+    the damper underlever contact (with black keys stepping down to the common
+    tail level so every underlever sits at one height). Slabs fill to the
+    neighbor midpoints like a real keybed - a continuous surface with thin
+    kerfs - and every tail ends on the same line. World coords."""
     b = _Buf()
     x, yl, s = n["x"], n["yl"], n["s"]
+    xl, xr = n["arm_x0"], n["arm_x1"]
     hy, hz = n["hinge_y"], n["hinge_z"]
+    tail_end = s + DCONTACT_DY + 0.006
     if n["color"] == "black":
         z0, z1 = hz - 0.0045, hz + 0.0015
     else:
         z0, z1 = hz - 0.0038, hz + 0.0042
-    b.box(x - 0.005, x + 0.005, hy + 0.0005, yl + 0.010, z0, z1, WALNUT)
+    if n["color"] == "black":
+        step_y = yl + 0.020
+        b.box(xl, xr, hy + 0.0005, step_y, z0, z1, WALNUT)
+        b.box(xl, xr, step_y - 0.002, step_y + 0.010, 0.7225, z0 + 0.001, WALNUT)
+        b.box(xl, xr, step_y, tail_end, 0.7225, 0.7305, WALNUT)
+    else:
+        b.box(xl, xr, hy + 0.0005, tail_end, z0, z1, WALNUT)
+    if n["note"] <= DAMPER_LINK_TOP:
+        b.box(x - 0.0045, x + 0.0045, s + DCONTACT_DY - 0.008,
+              s + DCONTACT_DY + 0.004, 0.7305, 0.7317, FELT_RED)     # lift felt
     b.cyl("z", (x, yl), 0.0035, z1, 0.746, BRASS)                    # capstan
     b.cyl("z", (x, yl), 0.0048, 0.746, CAP_TOP_Z, BRASS)
     ybc = s - 0.016                                                  # backcheck
-    b.bar((x, ybc, z1), (x, ybc, 0.794), 0.0011, BRASS)
-    b.box(x - 0.004, x + 0.004, ybc - 0.0025, ybc + 0.0025, 0.794, 0.806, LEATHER)
+    b.bar((x, ybc, z1), (x, ybc, 0.821), 0.0011, BRASS)
+    b.box(x - 0.004, x + 0.004, ybc - 0.0025, ybc + 0.0025, 0.821, 0.833, LEATHER)
     return b
 
 
@@ -525,25 +604,42 @@ def _frame_buf(plan):
         b._emit(pts, f, mat)
 
     rail(W_PIVOT_DY, 0.008, 0.7465, 0.7605, WALNUT)      # support rail
-    rail(LETOFF_DY, 0.006, 0.792, 0.798, WALNUT)         # let-off rail
+    rail(LETOFF_DY, 0.006, 0.800, 0.807, WALNUT)         # let-off rail
     rail(RAIL_DY, 0.008, 0.7985, 0.8125, WALNUT)         # hammershank rail
 
     for n in notes:
         x, yl = n["x"], n["yl"]
         # let-off button: screw shaft + felted regulating button under the rail,
         # reaching the jack toe through the repetition lever's button window
-        b.cyl("z", (x, yl + LETOFF_DY), 0.0015, 0.786, 0.793, BRASS, n=8)
-        b.cyl("z", (x, yl + LETOFF_DY), 0.0035, 0.7836, 0.786, FELT_RED, n=10)
+        b.cyl("z", (x, yl + LETOFF_DY), 0.0015, 0.7917, 0.800, BRASS, n=8)
+        b.cyl("z", (x, yl + LETOFF_DY), 0.0035, 0.7893, 0.7917, FELT_RED, n=10)
         # hammershank flange: lug plates + center pin
         for sx in (-1, 1):
             b.box(x + sx * 0.0042, x + sx * 0.0072,
-                  yl + 0.107, yl + 0.123, 0.799, 0.811, MAPLE)
+                  yl + 0.107, yl + 0.123, 0.8115, 0.8235, MAPLE)
         b.cyl("x", (yl + FLANGE_DY, FLANGE_Z), 0.0012, x - 0.0042, x + 0.0042, BRASS, n=8)
         # drop screw on a small bracket beside the shank, over the lever tail
-        b.box(x + 0.0035, x + 0.0065, yl + 0.084, yl + 0.112, 0.8005, 0.8035, MAPLE)
-        b.bar((x + 0.005, yl + SCREW_DY, 0.7946), (x + 0.005, yl + SCREW_DY, 0.8005),
+        b.box(x + 0.0035, x + 0.0065, yl + 0.084, yl + 0.112, 0.8045, 0.8075, MAPLE)
+        b.bar((x + 0.005, yl + SCREW_DY, 0.8011), (x + 0.005, yl + SCREW_DY, 0.8045),
               0.0012, BRASS)
-        b.cyl("z", (x + 0.005, yl + SCREW_DY), 0.0022, 0.7946, 0.7966, BRASS, n=8)
+        b.cyl("z", (x + 0.005, yl + SCREW_DY), 0.0022, 0.8011, 0.8031, BRASS, n=8)
+        # damper underlever flange lug on its own rail (linked notes only)
+        if n["note"] <= DAMPER_LINK_TOP:
+            yd = a + slope * x + DLEVER_DY
+            b.box(x - 0.004, x + 0.004, yd + 0.004, yd + 0.014,
+                  0.7365, 0.7425, MAPLE)
+
+    # damper underlever rail spans the linked notes
+    link = [n for n in notes if n["note"] <= DAMPER_LINK_TOP]
+    if link:
+        pts = []
+        for x in (link[0]["x"] - 0.012, link[-1]["x"] + 0.012):
+            yc = a + slope * x + DRAIL_DY
+            pts += [(x, yc - 0.0075, 0.733), (x, yc + 0.0075, 0.733),
+                    (x, yc + 0.0075, 0.7465), (x, yc - 0.0075, 0.7465)]
+        fcs = [(3, 2, 1, 0), (4, 5, 6, 7)]
+        fcs += [(i, (i + 1) % 4, 4 + (i + 1) % 4, 4 + i) for i in range(4)]
+        b._emit(pts, fcs, WALNUT)
 
     for x0, x1 in ((xL - 0.0045, xL - 0.0005), (xR + 0.0005, xR + 0.0045)):
         yc = a + slope * (0.5 * (x0 + x1))
@@ -573,24 +669,26 @@ def _tag(obj, part, note):
     obj[NOTE_PROP] = note
 
 
-def _driver(obj, key, expr, with_hammer=False):
-    # SINGLE_PROP on the raw channel (not a TRANSFORMS variable): it is exactly
-    # what the live animator writes, and it also evaluates headless.
-    fc = obj.driver_add("rotation_euler", 0)
+def _drive(obj, channel, index, expr, var_specs):
+    # SINGLE_PROP on raw channels (not TRANSFORMS variables): they are exactly
+    # what the live animator writes, and they also evaluate headless.
+    fc = obj.driver_add(channel, index)
     drv = fc.driver
     drv.type = "SCRIPTED"
-    var = drv.variables.new()
-    var.name = "r"
-    var.type = "SINGLE_PROP"
-    var.targets[0].id = key
-    var.targets[0].data_path = "rotation_euler[0]"
-    if with_hammer:
+    for name, vid, path in var_specs:
         var = drv.variables.new()
-        var.name = "h"
+        var.name = name
         var.type = "SINGLE_PROP"
-        var.targets[0].id = key
-        var.targets[0].data_path = '["hammer"]'
+        var.targets[0].id = vid
+        var.targets[0].data_path = path
     drv.expression = expr
+
+
+def _driver(obj, key, expr, with_hammer=False):
+    var_specs = [("r", key, "rotation_euler[0]")]
+    if with_hammer:
+        var_specs.append(("h", key, '["hammer"]'))
+    _drive(obj, "rotation_euler", 0, expr, var_specs)
 
 
 _QEXPR = f"max(min(r*{Q:.4f},1),0)"
@@ -657,11 +755,214 @@ def _build_units(plan, coll, mats):
     frame = _frame_buf(plan).to_object("Action_Frame", (0, 0, 0), coll, mats)
     _tag(frame, "frame", -1)
 
-    # The new drivers' first evaluation must see freshly-copied key data, or
+
+def _pedal_obj():
+    for obj in bpy.data.objects:
+        if obj.get("steinway_role") == "sustain_pedal":
+            return obj
+    return None
+
+
+def _damper_lever_buf():
+    b = _Buf()
+    b.box(-0.0045, 0.0045, -0.003, 0.009, -0.004, 0.004, MAPLE)      # flange
+    b.box(-0.004, 0.004, -0.063, 0.004, -0.003, 0.003, MAPLE)        # lever bar
+    b.box(-0.004, 0.004, -0.059, -0.051, -0.0042, -0.003, FELT_RED)  # contact felt
+    b.box(-0.0025, 0.0025, -0.0475, -0.0415, 0.003, 0.0065, MAPLE)   # wire post
+    return b
+
+
+def _build_dampers(plan, coll, mats):
+    """Per-note damper action (notes 21..DAMPER_TOP): head riding its course,
+    wire cranked back over the shanks, underlever lifted by the key arm's tail,
+    and a sustain tray - so a pressed key or the pedal raises the dampers."""
+    try:
+        from . import strings as strings_mod
+        courses = {c["note"]: c for c in strings_mod.course_lines()}
+    except Exception:  # noqa: BLE001 - no stand-in strings to measure
+        courses = {}
+    if not courses:
+        return 0
+    pedal = _pedal_obj()
+    a, b = plan["line"]
+
+    # Damper heads must not pass through the plate struts: probe each head
+    # footprint from below and slide along its course where a strut crosses.
+    from mathutils.bvhtree import BVHTree
+    plate_geo = ([], [])
+    for name in ("Brass_Sound_Works.001", "Brass_Sound_Works.002"):
+        obj = bpy.data.objects.get(name)
+        if obj is None or obj.type != "MESH":
+            continue
+        mw = _world_matrix(obj)
+        base = len(plate_geo[0])
+        plate_geo[0].extend(tuple(mw @ v.co) for v in obj.data.vertices)
+        plate_geo[1].extend(tuple(base + i for i in p.vertices)
+                            for p in obj.data.polygons)
+    plate_bvh = BVHTree.FromPolygons(*plate_geo) if plate_geo[0] else None
+
+    def head_blocked(cx, y, hb, half_d):
+        """Probe rays whose plate hit passes THROUGH the head's z-range.
+
+        Plate surfaces below the head's bottom (the gold top skin under the
+        string band) are not intersections - only raised bars and struts that
+        cross between felt bottom and head top count.
+        """
+        if plate_bvh is None:
+            return 0
+        up = Vector((0.0, 0.0, 1.0))
+        top = hb + 0.017
+        blocked = 0
+        for dx in (-0.007, 0.0, 0.007):
+            for dy in (-half_d - 0.0005, -half_d / 2, half_d / 2, half_d + 0.0005):
+                origin = Vector((cx + dx, y + dy, 0.845))
+                dist = 0.0
+                while dist < 0.085:
+                    hit = plate_bvh.ray_cast(origin, up, 0.09 - dist)
+                    if hit[0] is None:
+                        break
+                    if hb - 0.003 < hit[0].z < top + 0.002:
+                        blocked += 1
+                        break
+                    if hit[0].z >= top + 0.002:
+                        break
+                    dist += (hit[0].z - origin.z) + 0.0005
+                    origin = Vector((cx + dx, y + dy, hit[0].z + 0.0005))
+        return blocked
+
+    # The decorative damper meshes stay for the web export but hide here.
+    tops = bpy.data.objects.get("Dampers Tops")
+    bots = bpy.data.objects.get("Dampers Bottoms")
+    for obj in (tops, bots):
+        if obj is not None:
+            _hide_keep(obj)
+    top_mat = (tops.data.materials[0] if tops and tops.data.materials
+               else mats[FELT])
+    felt_mat = (bots.data.materials[0] if bots and bots.data.materials
+                else mats[FELT])
+    dmats = [top_mat, felt_mat, mats[BRASS]]
+    lever_proto = None
+
+    def lift_exprs(A):
+        """Damper z lift / underlever angle as max(key term, pedal term)."""
+        key_z = f"max(({A:.4f}*min(r*{Q:.4f},1)-{DGAP})*0.8182,0)"
+        key_t = f"max(({A:.4f}*min(r*{Q:.4f},1)-{DGAP})*18.1818,0)"
+        if pedal is None:
+            return key_z, f"-{key_t}"
+        ped = f"max(min(pd*{PEDAL_Q:.4f},1),0)"
+        return (f"max({key_z},{DPEDAL_LIFT}*{ped})",
+                f"-max({key_t},{DPEDAL_LIFT / 0.045:.4f}*{ped})")
+
+    built = 0
+    clipped = []
+    for n in plan["notes"]:
+        note = n["note"]
+        if note > DAMPER_TOP or note not in courses:
+            continue
+        c = courses[note]
+        key, x, s = n["key"], n["x"], n["s"]
+        fit = a + b * x
+        F, R = c["F"], c["R"]
+
+        def at_y(y):
+            t = (y - F.y) / (R.y - F.y)
+            return (F.x + t * (R.x - F.x),
+                    F.z + t * (R.z - F.z) + c["r"] + 0.0002)
+
+        # Real damper heads shorten toward the treble - and must here, where
+        # the row converges with the bays' rear border bar.
+        depth = 0.045 - 0.017 * (note - 21) / (DAMPER_TOP - 21)
+        half_d = depth / 2.0
+        y_h = s + HEAD_DY
+        cx, hb = at_y(y_h)
+        # Slide along the course where a plate bar crosses the damper row:
+        # smallest offset that fully clears wins; otherwise least-blocked.
+        # Never slide so far forward that the head meets the hammer at strike.
+        y_floor = s + 0.009 + half_d
+        residual = head_blocked(cx, y_h, hb, half_d)
+        if residual:
+            best = (residual, 0.0, cx, hb)
+            for step in range(1, 12):
+                for dy in (0.004 * step, -0.004 * step):
+                    if y_h + dy < y_floor:
+                        continue
+                    cx2, hb2 = at_y(y_h + dy)
+                    n_blk = head_blocked(cx2, y_h + dy, hb2, half_d)
+                    if n_blk < best[0]:
+                        best = (n_blk, dy, cx2, hb2)
+                if best[0] == 0:
+                    break
+            residual, y_h, cx, hb = best[0], y_h + best[1], best[2], best[3]
+            if residual:
+                clipped.append((note, residual))
+        linked = note <= DAMPER_LINK_TOP
+
+        dbuf = _Buf()
+        dbuf.box(cx - 0.00625, cx + 0.00625, y_h - half_d, y_h + half_d,
+                 hb + 0.005, hb + 0.017, 0)            # painted head block
+        dbuf.box(cx - 0.00625, cx + 0.00625, y_h - half_d, y_h + half_d,
+                 hb, hb + 0.005, 1)                    # damper felt
+        if linked:
+            dbuf.bar((cx, y_h, hb), (cx, y_h, 0.875), 0.0009, 2)
+            dbuf.bar((cx, y_h, 0.875), (x, fit + WIRE_DY, 0.832), 0.0009, 2)
+            dbuf.bar((x, fit + WIRE_DY, 0.832), (x, fit + WIRE_DY, 0.746), 0.0009, 2)
+        else:
+            dbuf.bar((cx, y_h, hb), (cx, y_h, hb - 0.040), 0.0009, 2)
+        dob = dbuf.to_object(f"Damper.{note:03d}", (cx, y_h, 0.0), coll, dmats)
+        _tag(dob, "damper_head", note)
+
+        A = n["psi"] * (fit + DCONTACT_DY - n["hinge_y"])
+        z_expr, t_expr = lift_exprs(A)
+        var_specs = [("r", key, "rotation_euler[0]")]
+        if pedal is not None:
+            var_specs.append(("pd", pedal, "rotation_euler[0]"))
+        _drive(dob, "location", 2, z_expr, var_specs)
+
+        if linked:
+            if lever_proto is None:
+                proto_obj = _damper_lever_buf().to_object(
+                    "ActionMesh.DamperLever", (0, 0, 0), coll, mats)
+                lever_proto = proto_obj.data
+                bpy.data.objects.remove(proto_obj, do_unlink=True)
+            lev = bpy.data.objects.new(f"DamperLever.{note:03d}", lever_proto)
+            lev.location = (x, fit + DLEVER_DY, DLEVER_Z)
+            coll.objects.link(lev)
+            _tag(lev, "damper_lever", note)
+            _drive(lev, "rotation_euler", 0, t_expr, list(var_specs))
+        built += 1
+
+    # Sustain lift tray under the underlever fronts.
+    link = [n for n in plan["notes"] if n["note"] <= DAMPER_LINK_TOP]
+    if link:
+        tbuf = _Buf()
+        pts = []
+        for x in (link[0]["x"] - 0.012, link[-1]["x"] + 0.012):
+            yc = a + b * x + DTRAY_DY
+            pts += [(x, yc - 0.010, 0.7305), (x, yc + 0.010, 0.7305),
+                    (x, yc + 0.010, 0.7345), (x, yc - 0.010, 0.7345)]
+        fcs = [(3, 2, 1, 0), (4, 5, 6, 7)]
+        fcs += [(i, (i + 1) % 4, 4 + (i + 1) % 4, 4 + i) for i in range(4)]
+        tbuf._emit(pts, fcs, WALNUT)
+        tray = tbuf.to_object("Damper_Tray", (0, 0, 0), coll, mats)
+        _tag(tray, "damper_tray", -1)
+        if pedal is not None:
+            _drive(tray, "location", 2,
+                   f"{DPEDAL_LIFT / 0.8182:.4f}*max(min(pd*{PEDAL_Q:.4f},1),0)",
+                   [("pd", pedal, "rotation_euler[0]")])
+    if clipped:
+        print(f"[action] damper heads still touching plate: {clipped}")
+    return built
+
+
+def _tag_targets(plan):
+    # The new drivers' first evaluation must see freshly-copied target data, or
     # they compile against stale evaluated copies and stick invalid for the
     # session (reopened files build the graph from scratch and are fine).
     for n in plan["notes"]:
         n["key"].update_tag()
+    pedal = _pedal_obj()
+    if pedal is not None:
+        pedal.update_tag()
 
 
 # --------------------------------------------------------------------------- #
@@ -698,7 +999,36 @@ def _verify(plan):
         key["hammer"] = 0.0
         key.update_tag()
     deps.update()
-    return {"rows": rows, "heel_err": worst_heel, "strike_err": worst_strike}
+
+    # Damper action: a pressed key lifts its damper; the pedal lifts them all.
+    damper_err = 0.0
+    probe = bpy.data.objects.get("Damper.060")
+    pedal = _pedal_obj()
+    if probe is not None:
+        key = next(n["key"] for n in plan["notes"] if n["note"] == 60)
+        key.rotation_euler.x = PRESS_ANGLE
+        key.update_tag()
+        deps.update()
+        key_lift = probe.evaluated_get(deps).location.z
+        key.rotation_euler.x = 0.0
+        key.update_tag()
+        ped_lift = None
+        if pedal is not None:
+            pedal.rotation_euler.x = math.radians(5.0)
+            pedal.update_tag()
+            deps.update()
+            ped_lift = probe.evaluated_get(deps).location.z
+            pedal.rotation_euler.x = 0.0
+            pedal.update_tag()
+        deps.update()
+        damper_err = abs((ped_lift if ped_lift is not None else DPEDAL_LIFT)
+                         - DPEDAL_LIFT)
+        rows.append((60, "damper", round(key_lift, 5),
+                     round(ped_lift, 5) if ped_lift is not None else None, 0))
+        if key_lift < 0.003:
+            damper_err = max(damper_err, 1.0)
+    return {"rows": rows, "heel_err": worst_heel, "strike_err": worst_strike,
+            "damper_err": damper_err}
 
 
 # --------------------------------------------------------------------------- #
@@ -718,6 +1048,8 @@ def build():
     coll = _fresh_collection()
     mats = _materials()
     _build_units(plan, coll, mats)
+    dampers = _build_dampers(plan, coll, mats)
+    _tag_targets(plan)
     checks = _verify(plan)
     szs = [n["strike_z"] for n in plan["notes"]]
     a, b = plan["line"]
@@ -729,7 +1061,9 @@ def build():
         "strike_z": (round(min(szs), 4), round(max(szs), 4)),
         "shank": (round(min(n["shank"] for n in plan["notes"]), 4),
                   round(max(n["shank"] for n in plan["notes"]), 4)),
+        "dampers": dampers,
         "low_clearance_notes": flagged,
         "heel_err": round(checks["heel_err"], 5),
         "strike_err": round(checks["strike_err"], 5),
+        "damper_err": round(checks["damper_err"], 5),
     }
