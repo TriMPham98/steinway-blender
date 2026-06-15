@@ -320,9 +320,15 @@ function ensureKeyboardFocus() {
   }
 }
 
+function cancelCameraTween() {
+  if (!cameraTween.active) return;
+  cameraTween.active = false;
+  controls.enabled = true;
+}
+
 function bindViewPresetClearOnUserInput() {
   const onManualInput = () => {
-    if (cameraTween.active) return;
+    cancelCameraTween();
     clearActiveViewPreset();
     viewingKeyboardRange = false;
   };
@@ -537,6 +543,9 @@ function releaseAllLocalNotes() {
 }
 
 function pointerDown(event) {
+  // Break out of intro / preset tweens as soon as the user touches the canvas.
+  cancelCameraTween();
+
   if (!piano || live?.isRunning) return;
   const rect = renderer.domElement.getBoundingClientRect();
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -544,6 +553,9 @@ function pointerDown(event) {
   raycaster.setFromCamera(pointer, camera);
   const note = piano.pick(raycaster);
   if (note == null) return;
+  // OrbitControls also listens on pointerdown; swallow key hits so a click
+  // plays a note instead of capturing the pointer for a camera drag.
+  event.stopPropagation();
   localNoteOn(note, 100);
   pointerNotes.add(note);
 }
@@ -767,7 +779,7 @@ async function init() {
 
 bindViewPresetClearOnUserInput();
 
-renderer.domElement.addEventListener("pointerdown", pointerDown);
+renderer.domElement.addEventListener("pointerdown", pointerDown, { capture: true });
 window.addEventListener("pointerup", pointerUp);
 
 function onResize() {
