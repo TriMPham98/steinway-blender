@@ -19,8 +19,9 @@ The version here tracks `version` in
   raise dampers on glTF ``position.y`` (Blender ``location.z``), not
   ``position.z`` — which had been sliding them back and forth along the piano.
 - **Clicking keys no longer hijacks the camera.** Key hits use capture-phase
-  ``stopImmediatePropagation`` before OrbitControls, release any pointer
-  capture, and preset tweens no longer disable orbit — user drags always win.
+  ``stopPropagation`` before OrbitControls; preset tweens no longer disable
+  orbit, and pointer-up no longer preempts OrbitControls cleanup (which had
+  been freezing the camera after the first key click).
 
 ## [0.7.5] - 2026-06-15
 

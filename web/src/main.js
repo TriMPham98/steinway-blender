@@ -325,24 +325,6 @@ function cancelCameraTween() {
   cameraTween.active = false;
 }
 
-/** Drop any in-flight orbit drag so key clicks never leave controls captured. */
-function interruptOrbitControls(event) {
-  cancelCameraTween();
-  controls.enabled = true;
-  if (controls.state !== -1) {
-    controls.state = -1;
-    controls.update();
-  }
-  const pid = event?.pointerId;
-  if (pid != null) {
-    try {
-      renderer.domElement.releasePointerCapture(pid);
-    } catch {
-      /* not captured */
-    }
-  }
-}
-
 function bindViewPresetClearOnUserInput() {
   const onManualInput = () => {
     cancelCameraTween();
@@ -575,26 +557,20 @@ function onCanvasPointerDown(event) {
   if (event.button !== 0) return;
   const note = pickKeyAtClient(event.clientX, event.clientY);
   if (note != null) {
-    // Capture phase, before OrbitControls — play the key, not the camera.
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    interruptOrbitControls(event);
+    // Capture phase, before OrbitControls bubble handler — play the key.
+    cancelCameraTween();
+    event.stopPropagation();
     localNoteOn(note, 100);
     pointerNotes.add(note);
     return;
   }
-  interruptOrbitControls(event);
+  cancelCameraTween();
 }
 
-function releasePointerNotes() {
+function onPointerUp() {
   if (!pointerNotes.size) return;
   for (const note of pointerNotes) localNoteOff(note);
   pointerNotes.clear();
-}
-
-function onCanvasPointerUp(event) {
-  interruptOrbitControls(event);
-  releasePointerNotes();
 }
 
 async function init() {
@@ -813,12 +789,7 @@ bindViewPresetClearOnUserInput();
 renderer.domElement.addEventListener("pointerdown", onCanvasPointerDown, {
   capture: true,
 });
-renderer.domElement.addEventListener("pointerup", onCanvasPointerUp, {
-  capture: true,
-});
-renderer.domElement.addEventListener("pointercancel", onCanvasPointerUp, {
-  capture: true,
-});
+window.addEventListener("pointerup", onPointerUp);
 
 function onResize() {
   const w = window.innerWidth;
