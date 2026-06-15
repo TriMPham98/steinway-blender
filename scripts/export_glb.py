@@ -99,11 +99,17 @@ def _strip_replaced():
 
 
 def _unhide_all():
-    """Clear hide flags so view-hidden keepers (e.g. the decorative damper
-    meshes, which stand in for the stripped moving dampers) join and export."""
+    """Clear hide flags on meshes that should join Piano_Static.
+
+    Skips ``steinway_replaced`` retirees (decorative dampers once the action
+    damper set exists). Those only export on builds without ``--with-action``,
+    where they are not tagged replaced and serve as the static stand-in.
+    """
     import bpy
 
     for obj in bpy.data.objects:
+        if obj.get("steinway_replaced"):
+            continue
         obj.hide_viewport = False
         obj.hide_render = False
         obj.hide_set(False)

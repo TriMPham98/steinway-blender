@@ -115,6 +115,7 @@ CUT_VERSION = 2
 COLLECTION = "Steinway_Action"
 PART_PROP = "action_part"
 NOTE_PROP = "action_note"
+REPLACED_PROP = "steinway_replaced"
 
 # Meshes the hammers must clear from below (strike-height raycast targets).
 # "Strings_Full" is the rebuilt 88-course set (build/strings.py), present once
@@ -765,6 +766,27 @@ def _pedal_obj():
     return None
 
 
+def _damper_head_buf(b, cx, y0, y1, hb, half_w=0.00625):
+    """Wedge felt + tapered wood block (the old paired boxes read as unfinished
+    rectangles; this matches the crowned profile of the imported damper units)."""
+    depth = y1 - y0
+    felt = [
+        (y0, hb),
+        (y0 + 0.14 * depth, hb + 0.0008),
+        (y0 + 0.42 * depth, hb + 0.0042),
+        (y1 - 0.10 * depth, hb + 0.0035),
+        (y1, hb + 0.0005),
+    ]
+    b.profile_x(felt, cx - half_w, cx + half_w, 1)
+    block = [
+        (y0 + 0.08 * depth, hb + 0.005),
+        (y0 + 0.20 * depth, hb + 0.0145),
+        (y1 - 0.14 * depth, hb + 0.013),
+        (y1 - 0.04 * depth, hb + 0.0055),
+    ]
+    b.profile_x(block, cx - half_w * 0.92, cx + half_w * 0.92, 0)
+
+
 def _damper_lever_buf():
     b = _Buf()
     b.box(-0.0045, 0.0045, -0.003, 0.009, -0.004, 0.004, MAPLE)      # flange
@@ -832,12 +854,15 @@ def _build_dampers(plan, coll, mats):
                     origin = Vector((cx + dx, y + dy, hit[0].z + 0.0005))
         return blocked
 
-    # The decorative damper meshes stay for the web export but hide here.
+    # Retire the 51 decorative stand-ins once the per-note action dampers exist.
+    # export_glb strips steinway_replaced meshes; without --with-action the
+    # decorative units still export as the static stand-in dampers.
     tops = bpy.data.objects.get("Dampers Tops")
     bots = bpy.data.objects.get("Dampers Bottoms")
     for obj in (tops, bots):
         if obj is not None:
             _hide_keep(obj)
+            obj[REPLACED_PROP] = 1
     top_mat = (tops.data.materials[0] if tops and tops.data.materials
                else mats[FELT])
     felt_mat = (bots.data.materials[0] if bots and bots.data.materials
@@ -900,10 +925,7 @@ def _build_dampers(plan, coll, mats):
         linked = note <= DAMPER_LINK_TOP
 
         dbuf = _Buf()
-        dbuf.box(cx - 0.00625, cx + 0.00625, y_h - half_d, y_h + half_d,
-                 hb + 0.005, hb + 0.017, 0)            # painted head block
-        dbuf.box(cx - 0.00625, cx + 0.00625, y_h - half_d, y_h + half_d,
-                 hb, hb + 0.005, 1)                    # damper felt
+        _damper_head_buf(dbuf, cx, y_h - half_d, y_h + half_d, hb)
         if linked:
             dbuf.bar((cx, y_h, hb), (cx, y_h, 0.875), 0.0009, 2)
             dbuf.bar((cx, y_h, 0.875), (x, fit + WIRE_DY, 0.832), 0.0009, 2)
