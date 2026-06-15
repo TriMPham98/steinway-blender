@@ -40,10 +40,16 @@ async function download(url) {
 }
 
 const url = process.env.STEINWAY_MODEL_URL?.trim() || DEFAULT_URL;
+// Vercel clones often ship an LFS pointer or a stale binary; always pull the
+// published CDN object so production matches main.
+const force = process.env.VERCEL === "1" || process.env.FORCE_MODEL_FETCH === "1";
 
-if (hasModel()) {
+if (!force && hasModel()) {
   const mb = (fs.statSync(modelPath).size / 1e6).toFixed(1);
   console.log(`[fetch-model] using existing model (${mb} MB)`);
 } else {
+  if (force && hasModel()) {
+    console.log("[fetch-model] Vercel/force: refreshing model from CDN");
+  }
   await download(url);
 }
