@@ -101,41 +101,44 @@ export class PianoController {
 
   /** @param {number} dt */
   step(dt) {
-    return easeStep(
+    const animating = easeStep(
       this.state,
       this.pressAngle,
       dt,
-      (note, _depth, keyRotX, hammer) => {
+      (note, _depth, keyRotX, _hammer) => {
         const obj = this.noteMap.get(note);
         if (obj) obj.rotation.x = keyRotX;
-        this.action.apply(note, keyRotX, hammer, this.pedalObj?.rotation.x ?? 0);
       },
       (depth, pedalRotX) => {
         if (this.pedalObj) this.pedalObj.rotation.x = pedalRotX;
-        this.action.applyPedalTray(pedalRotX);
-        for (const note of this.noteMap.keys()) {
-          const obj = this.noteMap.get(note);
-          const keyRotX = obj?.rotation.x ?? 0;
-          const hammer = this.state.hammer.get(note) ?? 0;
-          this.action.apply(note, keyRotX, hammer, pedalRotX);
-        }
       },
     );
+    const pedalRotX = this.pedalObj?.rotation.x ?? 0;
+    this.action.applyPedalTray(pedalRotX, dt);
+    for (const note of this.noteMap.keys()) {
+      const obj = this.noteMap.get(note);
+      const keyRotX = obj?.rotation.x ?? 0;
+      const hammer = this.state.hammer.get(note) ?? 0;
+      this.action.apply(note, keyRotX, hammer, pedalRotX, dt);
+    }
+    return animating;
   }
 
   resetKeys() {
     reset(
       this.state,
-      (note, _depth, keyRotX, hammer) => {
+      (note, _depth, keyRotX, _hammer) => {
         const obj = this.noteMap.get(note);
         if (obj) obj.rotation.x = keyRotX;
-        this.action.apply(note, keyRotX, hammer, 0);
       },
       (_depth, pedalRotX) => {
         if (this.pedalObj) this.pedalObj.rotation.x = pedalRotX;
-        this.action.applyPedalTray(pedalRotX);
       },
     );
+    this.action.applyPedalTray(0, 0);
+    for (const note of this.noteMap.keys()) {
+      this.action.apply(note, 0, 0, 0, 0);
+    }
     this.action.reset();
   }
 
