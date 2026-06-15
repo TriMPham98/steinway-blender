@@ -21,6 +21,9 @@ The version here tracks `version` in
 - **Clicking keys no longer freezes orbit.** ``stopPropagation`` had been
   blocking OrbitControls from finishing its pointer cycle, leaving it stuck.
   Keys play on press; a drag releases the note and hands off to orbit.
+- **Key press no longer crashes the animation loop.** ``easeStep`` reused the
+  name ``h`` for both the integration substep and the hammer channel, which hit
+  JS temporal-dead-zone and stopped ``controls.update()`` from running.
 
 ## [0.7.5] - 2026-06-15
 

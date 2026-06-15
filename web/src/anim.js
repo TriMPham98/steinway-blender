@@ -105,7 +105,7 @@ export function easeStep(state, pressAngle, dt, applyKey, applyPedal) {
     return state.active.size > 0 || state.pedalActive;
   }
   const n = Math.max(1, Math.ceil(stepDt / SUBSTEP));
-  const h = stepDt / n;
+  const subDt = stepDt / n;
   const pressK = feel.stiffness;
   const pressC = feel.pressDamping;
   const releaseK = feel.releaseStiffness;
@@ -124,8 +124,8 @@ export function easeStep(state, pressAngle, dt, applyKey, applyPedal) {
     const k = tgt > 0.5 ? pressK : releaseK;
     const c = tgt > 0.5 ? pressC : releaseC;
     for (let i = 0; i < n; i++) {
-      vel += (k * (tgt - pos) - c * vel) * h;
-      pos += vel * h;
+      vel += (k * (tgt - pos) - c * vel) * subDt;
+      pos += vel * subDt;
       if (pos >= 1) {
         pos = 1;
         vel = Math.min(vel, 0);
