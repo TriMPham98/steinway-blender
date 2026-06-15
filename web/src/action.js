@@ -43,11 +43,11 @@ function hammerRot(q, h, lo, phiCap) {
  * @param {Map<number, THREE.Object3D>} noteMap
  */
 export function buildActionRig(root, noteMap) {
-  /** @type {Map<number, { keyArm?: THREE.Object3D, wippen?: THREE.Object3D, jack?: THREE.Object3D, repLever?: THREE.Object3D, hammer?: THREE.Object3D, damper?: THREE.Object3D, damperLever?: THREE.Object3D, psi?: number, letoff?: number, phiCap?: number, liftA?: number, damperRestZ?: number }>} */
+  /** @type {Map<number, { keyArm?: THREE.Object3D, wippen?: THREE.Object3D, jack?: THREE.Object3D, repLever?: THREE.Object3D, hammer?: THREE.Object3D, damper?: THREE.Object3D, damperLever?: THREE.Object3D, psi?: number, letoff?: number, phiCap?: number, liftA?: number, damperRestY?: number }>} */
   const units = new Map();
   let frame = null;
   let damperTray = null;
-  let trayRestZ = null;
+  let trayRestY = null;
 
   root.traverse((obj) => {
     const ex = extras(obj);
@@ -60,7 +60,7 @@ export function buildActionRig(root, noteMap) {
     }
     if (part === "damper_tray") {
       damperTray = obj;
-      trayRestZ = obj.position.z;
+      trayRestY = obj.position.y;
       return;
     }
     if (note == null || note < 0) return;
@@ -72,7 +72,8 @@ export function buildActionRig(root, noteMap) {
     if (part === "hammer") unit.hammer = obj;
     if (part === "damper_head") {
       unit.damper = obj;
-      unit.damperRestZ = obj.position.z;
+      // Blender location.z (up) exports as glTF/Three.js position.y.
+      unit.damperRestY = obj.position.y;
     }
     if (part === "damper_lever") unit.damperLever = obj;
     if (ex.action_psi != null) unit.psi = ex.action_psi;
@@ -115,8 +116,8 @@ export function buildActionRig(root, noteMap) {
       const keyLift = Math.max((unit.liftA ?? 0) * q - DGAP, 0) * 0.8182;
       const pedalLift = DPEDAL_LIFT * pedalQ;
       const lift = Math.max(keyLift, pedalLift);
-      if (unit.damper && unit.damperRestZ != null) {
-        unit.damper.position.z = unit.damperRestZ + lift;
+      if (unit.damper && unit.damperRestY != null) {
+        unit.damper.position.y = unit.damperRestY + lift;
       }
       const keyT = Math.max((unit.liftA ?? 0) * q - DGAP, 0) * 18.1818;
       const pedalT = (DPEDAL_LIFT / 0.045) * pedalQ;
@@ -125,9 +126,9 @@ export function buildActionRig(root, noteMap) {
       }
     },
     applyPedalTray(pedalRotX) {
-      if (!damperTray || trayRestZ == null) return;
+      if (!damperTray || trayRestY == null) return;
       const pedalQ = Math.max(0, Math.min(1, pedalRotX * PEDAL_Q));
-      damperTray.position.z = trayRestZ + (DPEDAL_LIFT / 0.8182) * pedalQ;
+      damperTray.position.y = trayRestY + (DPEDAL_LIFT / 0.8182) * pedalQ;
     },
     reset() {
       for (const note of noteMap.keys()) {

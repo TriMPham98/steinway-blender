@@ -15,6 +15,9 @@ The version here tracks `version` in
   top + felt geometry) but seats it on the action-line position with plate
   clearance and lift drivers - not the old box primitives or a second static
   copy welded into ``Piano_Static``.
+- **Web damper lift uses the vertical axis.** Sustain pedal and key travel now
+  raise dampers on glTF ``position.y`` (Blender ``location.z``), not
+  ``position.z`` — which had been sliding them back and forth along the piano.
 
 ## [0.7.5] - 2026-06-15
 
