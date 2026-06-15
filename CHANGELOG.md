@@ -24,9 +24,11 @@ The version here tracks `version` in
 - **Key press no longer crashes the animation loop.** ``easeStep`` reused the
   name ``h`` for both the integration substep and the hammer channel, which hit
   JS temporal-dead-zone and stopped ``controls.update()`` from running.
-- **Smoother web damper lift.** Soft contact onset (replaces the hard ``DGAP``
-  step), light low-pass on head/tray motion, and a per-frame sync pass so
-  sustain and idle keys stay continuous.
+- **Realistic web damper dynamics.** Driver targets match Blender
+  ``lift_exprs`` (linear past the ``DGAP`` contact, ``max(key,pedal)``).
+  Underlevers, damper heads, the sustain tray, and the pedal each integrate as
+  spring-damper masses; the wire couples lever rotation to head lift, heads drop
+  with gravity when slack, and bass dampers carry more inertia than treble.
 
 ## [0.7.5] - 2026-06-15
 

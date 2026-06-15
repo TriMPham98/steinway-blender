@@ -12,6 +12,11 @@ export const MIDI_HIGH = 108;
 export const HAMMER_FIRE_POS = 0.55;
 export const HAMMER_DECAY = 0.045;
 
+/** Sustain pedal rod + felt stack (effective ~220 g), ~90 ms stroke. */
+const PEDAL_MASS = 0.22;
+const PEDAL_SPRING = 72;
+const PEDAL_DAMP = 2 * Math.sqrt(PEDAL_SPRING * PEDAL_MASS) * 0.88;
+
 /** @typedef {{ stiffness: number, pressDamping: number, releaseStiffness: number, velocityGain: number, gamma: number, pedalRate: number }} Feel */
 
 export const DEFAULT_FEEL = {
@@ -56,6 +61,7 @@ export function createLiveState(noteMap, pedalObj, feel) {
     pedalObj,
     pedalTarget: 0,
     pedalCurrent: 0,
+    pedalVel: 0,
     pedalActive: false,
     hammer: new Map(),
     hamPending: new Set(),
@@ -159,14 +165,22 @@ export function easeStep(state, pressAngle, dt, applyKey, applyPedal) {
   }
 
   if (state.pedalActive && state.pedalObj && applyPedal) {
-    const rate = Math.min(Math.max(feel.pedalRate * stepDt, 0), 1);
-    let cur = state.pedalCurrent + (state.pedalTarget - state.pedalCurrent) * rate;
-    if (Math.abs(state.pedalTarget - cur) <= SETTLE) {
-      cur = state.pedalTarget;
+    let pos = state.pedalCurrent;
+    let vel = state.pedalVel;
+    for (let i = 0; i < n; i++) {
+      const a = (PEDAL_SPRING * (state.pedalTarget - pos) - PEDAL_DAMP * vel) / PEDAL_MASS;
+      vel += a * subDt;
+      pos += vel * subDt;
+      pos = Math.max(0, Math.min(1, pos));
+    }
+    state.pedalCurrent = pos;
+    state.pedalVel = vel;
+    if (Math.abs(state.pedalTarget - pos) <= SETTLE && Math.abs(vel) <= SETTLE) {
+      state.pedalCurrent = state.pedalTarget;
+      state.pedalVel = 0;
       state.pedalActive = false;
     }
-    state.pedalCurrent = cur;
-    applyPedal(cur, cur * PEDAL_ANGLE);
+    applyPedal(state.pedalCurrent, state.pedalCurrent * PEDAL_ANGLE);
   }
 
   return state.active.size > 0 || state.pedalActive || state.hammer.size > 0;
@@ -190,6 +204,7 @@ export function reset(state, applyKey, applyPedal) {
   state.active.clear();
   state.pedalTarget = 0;
   state.pedalCurrent = 0;
+  state.pedalVel = 0;
   state.pedalActive = false;
   state.hammer.clear();
   state.hamPending.clear();
