@@ -27,8 +27,9 @@ The version here tracks `version` in
 - **Realistic web damper dynamics.** Driver targets match Blender
   ``lift_exprs`` (linear past the ``DGAP`` contact, ``max(key,pedal)``).
   Underlevers, damper heads, the sustain tray, and the pedal each integrate as
-  spring-damper masses; the wire couples lever rotation to head lift, heads drop
-  with gravity when slack, and bass dampers carry more inertia than treble.
+  spring-damper masses; heads track the wire-implied lift from the underlever,
+  drop with gravity only on full release, and bass dampers carry more inertia
+  than treble.
 
 ## [0.7.5] - 2026-06-15
 

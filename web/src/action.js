@@ -29,16 +29,11 @@ const PEDAL_LEVER_GAIN = DPEDAL_LIFT / 0.045;
 const HEAD_MASS_LO = 0.012;
 const HEAD_MASS_HI = 0.005;
 const HEAD_SPRING = 2600;
-const HEAD_DAMP_LIFT = 2 * Math.sqrt(HEAD_SPRING * HEAD_MASS_LO) * 0.92;
-const HEAD_DAMP_DROP = HEAD_DAMP_LIFT * 0.55;
 
-/** Underlever (~12 g effective at pivot) — stiffer, leads the head via the wire. */
+/** Underlever (~12 g effective at pivot) — overdamped so it does not ring. */
 const LEVER_MASS = 0.012;
 const LEVER_SPRING = 5200;
-const LEVER_DAMP = 2 * Math.sqrt(LEVER_SPRING * LEVER_MASS) * 0.95;
-
-/** Wire pulls head when the lever outruns it (stiff steel, slight compliance). */
-const WIRE_K = 2200;
+const LEVER_DAMP = 2 * Math.sqrt(LEVER_SPRING * LEVER_MASS) * 1.15;
 
 /** Sustain tray + underlever backs (~90 g). */
 const TRAY_MASS = 0.09;
@@ -46,7 +41,9 @@ const TRAY_SPRING = 1100;
 const TRAY_DAMP = 2 * Math.sqrt(TRAY_SPRING * TRAY_MASS) * 0.93;
 
 const GRAVITY = 9.81;
-const PHYS_SUBSTEP = 0.004;
+const PHYS_SUBSTEP = 0.002;
+const SETTLE_POS = 4e-5;
+const SETTLE_VEL = 2e-3;
 
 /** Exact Blender driver targets for one damper note. */
 function damperDriverTargets(liftA, q, pedalQ) {
@@ -70,8 +67,16 @@ function liftFromLeverAngle(leverRad) {
   return Math.max((-leverRad / LEVER_ROT_GAIN) * HEAD_LIFT_GAIN, 0);
 }
 
+function headDamping(m, releasing) {
+  const zeta = releasing ? 0.75 : 1.05;
+  return 2 * zeta * Math.sqrt(HEAD_SPRING * m);
+}
+
 function integrateSpring(pos, vel, target, k, c, m, dt, extraForce = 0) {
   if (dt <= 0) return { pos: target, vel: 0 };
+  if (Math.abs(target - pos) <= SETTLE_POS && Math.abs(vel) <= SETTLE_VEL) {
+    return { pos: target, vel: 0 };
+  }
   const n = Math.max(1, Math.ceil(dt / PHYS_SUBSTEP));
   const h = dt / n;
   let p = pos;
@@ -85,33 +90,32 @@ function integrateSpring(pos, vel, target, k, c, m, dt, extraForce = 0) {
       v = Math.max(v, 0);
     }
   }
+  if (Math.abs(target - p) <= SETTLE_POS && Math.abs(v) <= SETTLE_VEL) {
+    return { pos: target, vel: 0 };
+  }
   return { pos: p, vel: v };
 }
 
-/** Head follows driver + wire tension; drops with gravity when the wire goes slack. */
+/**
+ * Head tracks max(driver, wire-implied lift) on one spring.
+ * Gravity only when the key and lever are both fully released — never while held.
+ */
 function integrateDamperHead(pos, vel, driverTarget, leverRad, m, dt) {
-  if (dt <= 0) return { pos: driverTarget, vel: 0 };
-  const n = Math.max(1, Math.ceil(dt / PHYS_SUBSTEP));
-  const h = dt / n;
-  let p = pos;
-  let v = vel;
-  for (let i = 0; i < n; i++) {
-    const wireLift = liftFromLeverAngle(leverRad);
-    const wireTension = wireLift > p + 1e-6;
-    const tgt = wireTension ? Math.max(driverTarget, wireLift) : driverTarget;
-    const dropping = tgt < p - 1e-6 || (!wireTension && v < 0);
-    const c = dropping ? HEAD_DAMP_DROP : HEAD_DAMP_LIFT;
-    const gravity = dropping ? -GRAVITY * m * 0.85 : 0;
-    const wirePull = wireTension ? WIRE_K * (wireLift - p) : 0;
-    const a = (HEAD_SPRING * (tgt - p) - c * v + wirePull + gravity) / m;
-    v += a * h;
-    p += v * h;
-    if (p < 0) {
-      p = 0;
-      v = Math.max(v, 0);
-    }
-  }
-  return { pos: p, vel: v };
+  const wireLift = liftFromLeverAngle(leverRad);
+  const target = Math.max(driverTarget, wireLift);
+  const held = driverTarget > 1e-5 || wireLift > 1e-5;
+  const releasing = !held && (target < pos - 1e-6 || vel < -SETTLE_VEL);
+  const gravity = releasing ? -GRAVITY * m * 0.65 : 0;
+  return integrateSpring(
+    pos,
+    vel,
+    target,
+    HEAD_SPRING,
+    headDamping(m, releasing),
+    m,
+    dt,
+    gravity,
+  );
 }
 
 function extras(obj) {
