@@ -7,6 +7,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 The version here tracks `version` in
 `extension/steinway_midi_piano/blender_manifest.toml`.
 
+## [0.7.6] - 2026-06-15
+
+### Fixed
+- **Action dampers use the imported shape on the fitted row.** Each
+  ``Damper.NNN`` now clones the nearest decorative unit mesh (the model's own
+  top + felt geometry) but seats it on the action-line position with plate
+  clearance and lift drivers - not the old box primitives or a second static
+  copy welded into ``Piano_Static``.
+
 ## [0.7.5] - 2026-06-15
 
 ### Fixed
@@ -14,8 +23,6 @@ The version here tracks `version` in
   ``Dampers Tops``/``Bottoms`` stand-ins are now tagged ``steinway_replaced``
   once the per-note action dampers are built, so ``--with-action`` exports only
   the action heads (not the old rectangles welded into ``Piano_Static``).
-  Action damper heads use a crowned felt + tapered block profile instead of raw
-  paired boxes.
 
 ## [0.7.4] - 2026-06-15
 

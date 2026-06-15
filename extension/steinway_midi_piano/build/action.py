@@ -766,9 +766,68 @@ def _pedal_obj():
     return None
 
 
+def _collect_decorative_templates():
+    """Snapshot each imported decorative damper unit (top + felt) for reuse."""
+    from . import strings as strings_mod
+
+    if bpy.data.objects.get("Dampers Tops") is None:
+        return []
+    units = strings_mod._damper_units()
+    templates = []
+    for unit in units:
+        verts, faces, fmats = [], [], []
+        for d in unit:
+            obj = d["obj"]
+            mw = _world_matrix(obj)
+            me = obj.data
+            mi = 1 if d["is_felt"] else 0
+            idx_set = set(d["idx"])
+            vmap = {}
+            for poly in me.polygons:
+                pverts = poly.vertices
+                if not all(vi in idx_set for vi in pverts):
+                    continue
+                mapped = []
+                for vi in pverts:
+                    if vi not in vmap:
+                        vmap[vi] = len(verts)
+                        verts.append(mw @ me.vertices[vi].co)
+                    mapped.append(vmap[vi])
+                faces.append(tuple(mapped))
+                fmats.append(mi)
+        if not verts:
+            continue
+        felt_z = min((d["zmin"] for d in unit if d["is_felt"]),
+                     default=min(v.z for v in verts))
+        cx = sum(v.x for v in verts) / len(verts)
+        cy = sum(v.y for v in verts) / len(verts)
+        templates.append({
+            "verts": verts, "faces": faces, "fmats": fmats,
+            "felt_z": felt_z, "cx": cx, "cy": cy,
+        })
+    templates.sort(key=lambda t: t["cx"])
+    return templates
+
+
+def _nearest_decorative_template(templates, x):
+    return min(templates, key=lambda t: abs(t["cx"] - x))
+
+
+def _place_decorative_head(buf, template, cx, y_h, hb):
+    """Imported damper shape seated on the action line (felt on the string)."""
+    shift = Vector((cx - template["cx"], y_h - template["cy"],
+                    hb - template["felt_z"]))
+    base = len(buf.v)
+    for v in template["verts"]:
+        w = v + shift
+        buf.v.append((w.x, w.y, w.z))
+    for face, mi in zip(template["faces"], template["fmats"]):
+        buf.f.append(tuple(base + i for i in face))
+        buf.fm.append(mi)
+
+
 def _damper_head_buf(b, cx, y0, y1, hb, half_w=0.00625):
-    """Wedge felt + tapered wood block (the old paired boxes read as unfinished
-    rectangles; this matches the crowned profile of the imported damper units)."""
+    """Procedural fallback when the imported decorative units are missing."""
     depth = y1 - y0
     felt = [
         (y0, hb),
@@ -854,11 +913,12 @@ def _build_dampers(plan, coll, mats):
                     origin = Vector((cx + dx, y + dy, hit[0].z + 0.0005))
         return blocked
 
-    # Retire the 51 decorative stand-ins once the per-note action dampers exist.
-    # export_glb strips steinway_replaced meshes; without --with-action the
-    # decorative units still export as the static stand-in dampers.
+    # Snapshot the imported decorative units, then retire the joined meshes.
+    # Each action damper clones the nearest decorative shape but is seated on
+    # the fitted action line (not the old 51-string spacing).
     tops = bpy.data.objects.get("Dampers Tops")
     bots = bpy.data.objects.get("Dampers Bottoms")
+    deco_templates = _collect_decorative_templates()
     for obj in (tops, bots):
         if obj is not None:
             _hide_keep(obj)
@@ -925,7 +985,12 @@ def _build_dampers(plan, coll, mats):
         linked = note <= DAMPER_LINK_TOP
 
         dbuf = _Buf()
-        _damper_head_buf(dbuf, cx, y_h - half_d, y_h + half_d, hb)
+        if deco_templates:
+            _place_decorative_head(
+                dbuf, _nearest_decorative_template(deco_templates, x),
+                cx, y_h, hb)
+        else:
+            _damper_head_buf(dbuf, cx, y_h - half_d, y_h + half_d, hb)
         if linked:
             dbuf.bar((cx, y_h, hb), (cx, y_h, 0.875), 0.0009, 2)
             dbuf.bar((cx, y_h, 0.875), (x, fit + WIRE_DY, 0.832), 0.0009, 2)
