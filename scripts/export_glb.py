@@ -3,7 +3,7 @@
     B=/Applications/Blender.app/Contents/MacOS/Blender
     $B --background assets/steinway_grand_playable.blend --python scripts/export_glb.py
     $B --background assets/steinway_grand_playable.blend --python scripts/export_glb.py -- \\
-        --out web/public/models/steinway.glb
+        --out web/public/models/steinway.glb --with-action
 
 Pipeline (source of truth: ``assets/steinway_grand_playable.blend``):
 

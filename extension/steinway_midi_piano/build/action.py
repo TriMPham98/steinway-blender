@@ -664,9 +664,11 @@ def _fresh_collection():
     return coll
 
 
-def _tag(obj, part, note):
+def _tag(obj, part, note, **extras):
     obj[PART_PROP] = part
     obj[NOTE_PROP] = note
+    for key, val in extras.items():
+        obj[f"action_{key}"] = val
 
 
 def _drive(obj, channel, index, expr, var_specs):
@@ -710,7 +712,7 @@ def _build_units(plan, coll, mats):
 
         arm = _key_arm_buf(n).to_object(
             f"KeyArm.{note:03d}", (x, n["hinge_y"], n["hinge_z"]), coll, mats)
-        _tag(arm, "key_arm", note)
+        _tag(arm, "key_arm", note, psi=n["psi"])
         _driver(arm, key, f"{n['psi']:.4f}*{_QEXPR}")
 
         wip = bpy.data.objects.new(f"Wippen.{note:03d}", proto["wippen"])
@@ -742,7 +744,7 @@ def _build_units(plan, coll, mats):
         ham = _hammer_buf(n["shank"]).to_object(
             f"Hammer.{note:03d}", (x, yl + FLANGE_DY, FLANGE_Z), coll, mats,
             local=True)
-        _tag(ham, "hammer", note)
+        _tag(ham, "hammer", note, letoff=n["letoff"], phi_cap=n["phi_cap"])
         lo = n["letoff"]
         ramp = 1.0 / max(1.0 - lo, 0.05)
         expr = (
@@ -909,9 +911,8 @@ def _build_dampers(plan, coll, mats):
         else:
             dbuf.bar((cx, y_h, hb), (cx, y_h, hb - 0.040), 0.0009, 2)
         dob = dbuf.to_object(f"Damper.{note:03d}", (cx, y_h, 0.0), coll, dmats)
-        _tag(dob, "damper_head", note)
-
         A = n["psi"] * (fit + DCONTACT_DY - n["hinge_y"])
+        _tag(dob, "damper_head", note, lift_a=A)
         z_expr, t_expr = lift_exprs(A)
         var_specs = [("r", key, "rotation_euler[0]")]
         if pedal is not None:

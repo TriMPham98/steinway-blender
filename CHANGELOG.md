@@ -7,6 +7,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 The version here tracks `version` in
 `extension/steinway_midi_piano/blender_manifest.toml`.
 
+## [0.7.4] - 2026-06-15
+
+### Added
+- **Web viewer ships the full action + fixed pin field.** Export with
+  `--with-action` keeps hammers, wippens, jacks, dampers, strings, and tuning
+  pins in `steinway.glb`; the web app now drives the same driver math as Blender
+  (key arms, escapement, hammer strike impulse, damper lift on key/pedal).
+
 ## [0.7.3] - 2026-06-15
 
 ### Fixed

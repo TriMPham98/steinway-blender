@@ -9,6 +9,8 @@ export const MAX_DT = 0.05;
 export const RELEASE_DAMP = 0.8;
 export const MIDI_LOW = 21;
 export const MIDI_HIGH = 108;
+export const HAMMER_FIRE_POS = 0.55;
+export const HAMMER_DECAY = 0.045;
 
 /** @typedef {{ stiffness: number, pressDamping: number, releaseStiffness: number, velocityGain: number, gamma: number, pedalRate: number }} Feel */
 
@@ -55,6 +57,9 @@ export function createLiveState(noteMap, pedalObj, feel) {
     pedalTarget: 0,
     pedalCurrent: 0,
     pedalActive: false,
+    hammer: new Map(),
+    hamPending: new Set(),
+    hamFired: new Set(),
   };
 }
 
@@ -72,6 +77,7 @@ export function setNote(state, note, velocity) {
     state.target.set(note, 1);
     const kick = strikeSpeed(state.feel, velocity);
     state.vel.set(note, Math.max(state.vel.get(note) ?? 0, kick));
+    state.hamPending.add(note);
   } else {
     state.target.set(note, 0);
   }
@@ -88,8 +94,8 @@ export function setSustain(state, on) {
  * @param {ReturnType<createLiveState>} state
  * @param {number} pressAngle radians
  * @param {number} dt seconds
- * @param {(note: number, depth: number) => void} applyKey
- * @param {(depth: number) => void} [applyPedal]
+ * @param {(note: number, depth: number, keyRotX: number, hammer: number) => void} applyKey
+ * @param {(depth: number, pedalRotX: number) => void} [applyPedal]
  * @returns {boolean} still animating
  */
 export function easeStep(state, pressAngle, dt, applyKey, applyPedal) {
@@ -104,6 +110,8 @@ export function easeStep(state, pressAngle, dt, applyKey, applyPedal) {
   const pressC = feel.pressDamping;
   const releaseK = feel.releaseStiffness;
   const releaseC = 2 * Math.sqrt(releaseK) * RELEASE_DAMP;
+  const decay = Math.exp(-stepDt / HAMMER_DECAY);
+  const hamFired = new Set();
 
   for (const note of [...state.active]) {
     if (!state.noteMap.has(note)) {
@@ -133,7 +141,21 @@ export function easeStep(state, pressAngle, dt, applyKey, applyPedal) {
     }
     state.pos.set(note, pos);
     state.vel.set(note, vel);
-    applyKey(note, pos * pressAngle);
+    if (state.hamPending.has(note) && pos >= HAMMER_FIRE_POS) {
+      state.hamPending.delete(note);
+      state.hammer.set(note, 1);
+      hamFired.add(note);
+    }
+    let h = state.hammer.get(note) ?? 0;
+    if (!hamFired.has(note) && h > 0) h *= decay;
+    if (h < 1e-4) {
+      h = 0;
+      state.hammer.delete(note);
+    } else {
+      state.hammer.set(note, h);
+    }
+    const keyRotX = pos * pressAngle;
+    applyKey(note, pos, keyRotX, h);
   }
 
   if (state.pedalActive && state.pedalObj && applyPedal) {
@@ -144,23 +166,23 @@ export function easeStep(state, pressAngle, dt, applyKey, applyPedal) {
       state.pedalActive = false;
     }
     state.pedalCurrent = cur;
-    applyPedal(cur * PEDAL_ANGLE);
+    applyPedal(cur, cur * PEDAL_ANGLE);
   }
 
-  return state.active.size > 0 || state.pedalActive;
+  return state.active.size > 0 || state.pedalActive || state.hammer.size > 0;
 }
 
 /**
  * @param {ReturnType<createLiveState>} state
- * @param {(note: number, angle: number) => void} applyKey
- * @param {(angle: number) => void} [applyPedal]
+ * @param {(note: number, depth: number, keyRotX: number, hammer: number) => void} applyKey
+ * @param {(depth: number, pedalRotX: number) => void} [applyPedal]
  */
 export function reset(state, applyKey, applyPedal) {
   for (const note of state.noteMap.keys()) {
-    applyKey(note, 0);
+    applyKey(note, 0, 0, 0);
   }
   if (state.pedalObj && applyPedal) {
-    applyPedal(0);
+    applyPedal(0, 0);
   }
   state.pos.clear();
   state.vel.clear();
@@ -169,4 +191,6 @@ export function reset(state, applyKey, applyPedal) {
   state.pedalTarget = 0;
   state.pedalCurrent = 0;
   state.pedalActive = false;
+  state.hammer.clear();
+  state.hamPending.clear();
 }

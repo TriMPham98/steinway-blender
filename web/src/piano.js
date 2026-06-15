@@ -9,6 +9,7 @@ import {
   setNote,
   setSustain,
 } from "./anim.js";
+import { buildActionRig } from "./action.js";
 
 /**
  * Three.js bridge for the Blender live anim pipeline.
@@ -59,6 +60,13 @@ export class PianoController {
       this.pedalObj,
       initialFeel ?? feelFromSettings(this.settings),
     );
+    this.action = buildActionRig(root, this.noteMap);
+    if (this.action.partCount > 0) {
+      console.info(
+        `[piano] action rig: ${this.action.partCount} notes` +
+          (this.action.hasFrame ? " + frame" : ""),
+      );
+    }
   }
 
   get keyCount() {
@@ -97,12 +105,20 @@ export class PianoController {
       this.state,
       this.pressAngle,
       dt,
-      (note, angle) => {
+      (note, _depth, keyRotX, hammer) => {
         const obj = this.noteMap.get(note);
-        if (obj) obj.rotation.x = angle;
+        if (obj) obj.rotation.x = keyRotX;
+        this.action.apply(note, keyRotX, hammer, this.pedalObj?.rotation.x ?? 0);
       },
-      (angle) => {
-        if (this.pedalObj) this.pedalObj.rotation.x = angle;
+      (depth, pedalRotX) => {
+        if (this.pedalObj) this.pedalObj.rotation.x = pedalRotX;
+        this.action.applyPedalTray(pedalRotX);
+        for (const note of this.noteMap.keys()) {
+          const obj = this.noteMap.get(note);
+          const keyRotX = obj?.rotation.x ?? 0;
+          const hammer = this.state.hammer.get(note) ?? 0;
+          this.action.apply(note, keyRotX, hammer, pedalRotX);
+        }
       },
     );
   }
@@ -110,14 +126,17 @@ export class PianoController {
   resetKeys() {
     reset(
       this.state,
-      (note, angle) => {
+      (note, _depth, keyRotX, hammer) => {
         const obj = this.noteMap.get(note);
-        if (obj) obj.rotation.x = angle;
+        if (obj) obj.rotation.x = keyRotX;
+        this.action.apply(note, keyRotX, hammer, 0);
       },
-      (angle) => {
-        if (this.pedalObj) this.pedalObj.rotation.x = angle;
+      (_depth, pedalRotX) => {
+        if (this.pedalObj) this.pedalObj.rotation.x = pedalRotX;
+        this.action.applyPedalTray(pedalRotX);
       },
     );
+    this.action.reset();
   }
 
   /**
