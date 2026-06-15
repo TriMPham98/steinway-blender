@@ -7,6 +7,20 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 The version here tracks `version` in
 `extension/steinway_midi_piano/blender_manifest.toml`.
 
+## [0.7.2] - 2026-06-11
+
+### Fixed
+- **Tuning pins form a real Steinway pin field.** Pins now stand on four
+  straight ranks parallel to the strike line (25 mm pitch, 30-105 mm in front
+  of it), with the rank cycling pin-to-pin in spatial order - the classic
+  diagonal lattice. Before, each pin sat a per-string distance from its
+  course's (ragged) front end, and a "slide along the string until the spot
+  reads flat" search pushed unlucky pins up to 64 mm out of line - the
+  wandering pins. The search is gone: rank assignment is deterministic
+  (same-rank neighbors stay >= 13 mm apart center-to-center for 6.4 mm pins),
+  and the few spots over a raised plate bar simply stand on the bar, which
+  the per-pin surface probe from 0.7.1 already handles.
+
 ## [0.7.1] - 2026-06-11
 
 ### Fixed

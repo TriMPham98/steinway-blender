@@ -51,7 +51,9 @@ SECTIONS = {
 STEEL_MAT = "Strings_Steel"
 COPPER, STEEL = 0, 1
 PIN_R = 0.0032           # tuning pin radius (build/harp.py builds the pins)
-WEB_Z = (0.868, 0.882)   # the plate's flat pin-field TOP surface
+RANKS = 4                # pin ranks (rows parallel to the strike line)
+RANK_REL0 = -0.030       # first rank: this far in front of the strike line
+RANK_PITCH = 0.025       # rank-to-rank spacing (flat web ends near -0.130)
 
 
 def _section_of(note):
@@ -247,27 +249,17 @@ def _plate_bvh():
         [tuple(p.vertices) for p in obj.data.polygons])
 
 
-def _pin_stag(bvh, front, dirxy, base):
-    """Pin distance along the string, slid until the pin stands on flat web.
+def _on_rank(front, dirxy, a, b, rank):
+    """Point where the string's plan-view line crosses pin rank ``rank``.
 
-    The plate's pin field carries raised bars and strut bases; a pin placed
-    into one clips through the gold. Probe the surface under each candidate
-    spot and keep sliding along the string until it reads as the flat web.
+    Ranks are straight lines parallel to the strike line (rel = y - (a+b*x)
+    constant), so the whole pin field reads as even rows with the classic
+    diagonal lattice, like a real plate - instead of distances measured from
+    each string's own (ragged) front end.
     """
-    if bvh is None:
-        return base
-    down = Vector((0.0, 0.0, -1.0))
-    for extra in (0.0, 0.004, 0.008, 0.012, 0.016, 0.020, 0.024,
-                  0.028, -0.004, 0.032, 0.036, 0.040, 0.044,
-                  0.048, 0.052, 0.056, 0.060, 0.064):
-        stag = base + extra
-        if stag < 0.006:
-            continue
-        p = front - dirxy * (stag + PIN_R)
-        hit = bvh.ray_cast(Vector((p.x, p.y, 0.93)), down, 0.12)
-        if hit[0] is not None and WEB_Z[0] <= hit[0].z <= WEB_Z[1]:
-            return stag
-    return base
+    rel = RANK_REL0 - RANK_PITCH * rank
+    t = ((front.y - b * front.x) - (a + rel)) / (dirxy.y - b * dirxy.x)
+    return front - dirxy * t
 
 
 def course_lines():
@@ -275,20 +267,20 @@ def course_lines():
 
     Returns a list of dicts: ``note``, ``F``/``R`` (course center front/rear),
     ``r`` (string radius), ``sec``, and ``unisons`` - one ``(F_k, R_k)`` segment
-    per physical string, with the front end extended toward its (staggered,
-    flat-web-verified) tuning-pin position over the plate's pin field.
+    per physical string, with the front end running to its tuning-pin position
+    on one of ``RANKS`` straight pin rows over the plate's pin field.
     """
     keys = action_mod._keys_sorted()
     meas = action_mod._measure(keys)
     plan = action_mod._plan(keys, meas)
     a, b = plan["line"]
-    bvh = _plate_bvh()
 
     bass, main = _string_samples()
     bass_anchors = [_anchor_x(F, R, a, b)[0] for F, R in bass]
     main_anchors = [_anchor_x(F, R, a, b)[0] for F, R in main]
 
     courses = []
+    pin_i = 0
     for n in plan["notes"]:
         note, x = n["note"], n["x"]
         sec = _section_of(note)
@@ -301,8 +293,13 @@ def course_lines():
         t = (note - lo) / max(hi - lo, 1)
         r = spec["r"][0] * (1 - t) + spec["r"][1] * t
         # Unisons sit side by side, perpendicular to the string in plan view;
-        # the front of each extends to its pin row (pins stagger like a real
-        # pin field so 3.2 mm pins fit strings only ~3 mm apart).
+        # each front runs to its pin on one of RANKS straight rows. The rank
+        # cycles pin-to-pin, which draws the diagonal lattice of a real pin
+        # field - and is what clears 6.4 mm pins between courses that run as
+        # little as ~9 mm apart: same-rank pins only recur RANKS pins along,
+        # never closer than a course gap. No per-pin dodging (it broke that
+        # guarantee); the handful of spots over a raised bar stand ON the bar
+        # (build/harp.py probes the surface under every pin).
         d = (R - F)
         dirxy = Vector((d.x, d.y, 0.0)).normalized()
         perp = Vector((-d.y, d.x, 0.0)).normalized()
@@ -310,9 +307,12 @@ def course_lines():
         unisons = []
         for k in range(m):
             off = perp * (spec["spread"] * (k - (m - 1) / 2.0))
-            stag = _pin_stag(bvh, F + off, dirxy,
-                             0.008 + 0.014 * ((note + k) % 3))
-            unisons.append((F + off - dirxy * stag, R + off))
+            # perp.x < 0: k ascends right-to-left, so cycle the rank in
+            # spatial (left-to-right) order or same-rank pins land a course
+            # gap MINUS a unison spread apart instead of plus.
+            pin = _on_rank(F + off, dirxy, a, b, (pin_i + m - 1 - k) % RANKS)
+            unisons.append((pin, R + off))
+        pin_i += m
         courses.append({"note": note, "F": F, "R": R, "r": r, "sec": sec,
                         "unisons": unisons})
     return courses

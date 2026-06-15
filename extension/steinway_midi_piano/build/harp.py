@@ -11,8 +11,9 @@ hammers and damper wires work in open air over the soundboard, exactly like the
 real plate. The struts and raised bars above the web are untouched.
 
 **Pins.** The stand-in pin field served 51 strings. This builds one tuning pin
-per physical string (225 for the Model-O-style scale; staggered rows like a
-real pin field, with each string's front end already extended to its pin by
+per physical string (225 for the Model-O-style scale; straight ranks parallel
+to the strike line with the rank cycling pin-to-pin - the diagonal lattice of
+a real pin field - with each string's front end already run to its pin by
 ``strings.course_lines``) plus one hitch pin per course at the rear. The old
 ``String Pins`` mesh is hidden and tagged ``steinway_replaced``.
 
