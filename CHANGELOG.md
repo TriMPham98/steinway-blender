@@ -18,9 +18,9 @@ The version here tracks `version` in
 - **Web damper lift uses the vertical axis.** Sustain pedal and key travel now
   raise dampers on glTF ``position.y`` (Blender ``location.z``), not
   ``position.z`` — which had been sliding them back and forth along the piano.
-- **Clicking keys no longer hijacks the camera.** Key hits stop propagation
-  before OrbitControls, and any canvas pointer input cancels an in-flight
-  camera tween so orbit is never left disabled after a click.
+- **Clicking keys no longer hijacks the camera.** Key hits use capture-phase
+  ``stopImmediatePropagation`` before OrbitControls, release any pointer
+  capture, and preset tweens no longer disable orbit — user drags always win.
 
 ## [0.7.5] - 2026-06-15
 
