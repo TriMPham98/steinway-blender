@@ -12,10 +12,9 @@ export const MIDI_HIGH = 108;
 export const HAMMER_FIRE_POS = 0.55;
 export const HAMMER_DECAY = 0.045;
 
-/** Sustain pedal rod + felt stack (effective ~220 g), ~90 ms stroke. */
-const PEDAL_MASS = 0.22;
-const PEDAL_SPRING = 72;
-const PEDAL_DAMP = 2 * Math.sqrt(PEDAL_SPRING * PEDAL_MASS) * 0.88;
+/** Sustain pedal stroke — exponential ease (no spring ringing at hold). */
+const PEDAL_PRESS_TAU = 0.09;
+const PEDAL_RELEASE_TAU = 0.07;
 
 /** @typedef {{ stiffness: number, pressDamping: number, releaseStiffness: number, velocityGain: number, gamma: number, pedalRate: number }} Feel */
 
@@ -166,21 +165,20 @@ export function easeStep(state, pressAngle, dt, applyKey, applyPedal) {
 
   if (state.pedalActive && state.pedalObj && applyPedal) {
     let pos = state.pedalCurrent;
-    let vel = state.pedalVel;
-    for (let i = 0; i < n; i++) {
-      const a = (PEDAL_SPRING * (state.pedalTarget - pos) - PEDAL_DAMP * vel) / PEDAL_MASS;
-      vel += a * subDt;
-      pos += vel * subDt;
-      pos = Math.max(0, Math.min(1, pos));
+    const tgt = state.pedalTarget;
+    if (Math.abs(tgt - pos) <= SETTLE) {
+      pos = tgt;
+      state.pedalActive = false;
+    } else {
+      const tau = tgt > pos ? PEDAL_PRESS_TAU : PEDAL_RELEASE_TAU;
+      for (let i = 0; i < n; i++) {
+        const alpha = 1 - Math.exp(-subDt / tau);
+        pos += (tgt - pos) * alpha;
+      }
     }
     state.pedalCurrent = pos;
-    state.pedalVel = vel;
-    if (Math.abs(state.pedalTarget - pos) <= SETTLE && Math.abs(vel) <= SETTLE) {
-      state.pedalCurrent = state.pedalTarget;
-      state.pedalVel = 0;
-      state.pedalActive = false;
-    }
-    applyPedal(state.pedalCurrent, state.pedalCurrent * PEDAL_ANGLE);
+    state.pedalVel = 0;
+    applyPedal(pos, pos * PEDAL_ANGLE);
   }
 
   return state.active.size > 0 || state.pedalActive || state.hammer.size > 0;

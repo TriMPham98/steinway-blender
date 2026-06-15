@@ -25,25 +25,12 @@ const HEAD_LIFT_GAIN = 0.8182;
 const LEVER_ROT_GAIN = 18.1818;
 const PEDAL_LEVER_GAIN = DPEDAL_LIFT / 0.045;
 
-/** Damper head felt block (~5–12 g by register). */
-const HEAD_MASS_LO = 0.012;
-const HEAD_MASS_HI = 0.005;
-const HEAD_SPRING = 2600;
-
-/** Underlever (~12 g effective at pivot) — overdamped so it does not ring. */
-const LEVER_MASS = 0.012;
-const LEVER_SPRING = 5200;
-const LEVER_DAMP = 2 * Math.sqrt(LEVER_SPRING * LEVER_MASS) * 1.15;
-
-/** Sustain tray + underlever backs (~90 g). */
-const TRAY_MASS = 0.09;
-const TRAY_SPRING = 1100;
-const TRAY_DAMP = 2 * Math.sqrt(TRAY_SPRING * TRAY_MASS) * 0.93;
-
-const GRAVITY = 9.81;
-const PHYS_SUBSTEP = 0.002;
-const SETTLE_POS = 4e-5;
-const SETTLE_VEL = 2e-3;
+/** Monotonic lift/drop — exponential approach cannot ring at equilibrium. */
+const DAMPER_RISE_TAU = 0.02;
+const DAMPER_DROP_TAU = 0.013;
+const TRAY_RISE_TAU = 0.055;
+const TRAY_DROP_TAU = 0.04;
+const DAMPER_EPS = 5e-5;
 
 /** Exact Blender driver targets for one damper note. */
 function damperDriverTargets(liftA, q, pedalQ) {
@@ -58,64 +45,15 @@ function damperDriverTargets(liftA, q, pedalQ) {
   };
 }
 
-function headMassForNote(note) {
-  const t = Math.max(0, Math.min(1, (note - 21) / 67));
-  return HEAD_MASS_LO + (HEAD_MASS_HI - HEAD_MASS_LO) * t;
-}
-
-function liftFromLeverAngle(leverRad) {
-  return Math.max((-leverRad / LEVER_ROT_GAIN) * HEAD_LIFT_GAIN, 0);
-}
-
-function headDamping(m, releasing) {
-  const zeta = releasing ? 0.75 : 1.05;
-  return 2 * zeta * Math.sqrt(HEAD_SPRING * m);
-}
-
-function integrateSpring(pos, vel, target, k, c, m, dt, extraForce = 0) {
-  if (dt <= 0) return { pos: target, vel: 0 };
-  if (Math.abs(target - pos) <= SETTLE_POS && Math.abs(vel) <= SETTLE_VEL) {
-    return { pos: target, vel: 0 };
-  }
-  const n = Math.max(1, Math.ceil(dt / PHYS_SUBSTEP));
-  const h = dt / n;
-  let p = pos;
-  let v = vel;
-  for (let i = 0; i < n; i++) {
-    const a = (k * (target - p) - c * v + extraForce) / m;
-    v += a * h;
-    p += v * h;
-    if (p < 0) {
-      p = 0;
-      v = Math.max(v, 0);
-    }
-  }
-  if (Math.abs(target - p) <= SETTLE_POS && Math.abs(v) <= SETTLE_VEL) {
-    return { pos: target, vel: 0 };
-  }
-  return { pos: p, vel: v };
-}
-
-/**
- * Head tracks max(driver, wire-implied lift) on one spring.
- * Gravity only when the key and lever are both fully released — never while held.
- */
-function integrateDamperHead(pos, vel, driverTarget, leverRad, m, dt) {
-  const wireLift = liftFromLeverAngle(leverRad);
-  const target = Math.max(driverTarget, wireLift);
-  const held = driverTarget > 1e-5 || wireLift > 1e-5;
-  const releasing = !held && (target < pos - 1e-6 || vel < -SETTLE_VEL);
-  const gravity = releasing ? -GRAVITY * m * 0.65 : 0;
-  return integrateSpring(
-    pos,
-    vel,
-    target,
-    HEAD_SPRING,
-    headDamping(m, releasing),
-    m,
-    dt,
-    gravity,
-  );
+/** Critically damped exponential — smooth lift, faster drop, no oscillation. */
+function smoothDamper(pos, target, dt, riseTau, dropTau) {
+  if (dt <= 0) return target;
+  const err = target - pos;
+  if (Math.abs(err) <= DAMPER_EPS) return target;
+  const tau = err > 0 ? riseTau : dropTau;
+  const alpha = 1 - Math.exp(-dt / tau);
+  const next = pos + err * alpha;
+  return Math.max(0, next);
 }
 
 function extras(obj) {
@@ -141,13 +79,12 @@ function hammerRot(q, h, lo, phiCap) {
  * @param {Map<number, THREE.Object3D>} noteMap
  */
 export function buildActionRig(root, noteMap) {
-  /** @type {Map<number, { keyArm?: THREE.Object3D, wippen?: THREE.Object3D, jack?: THREE.Object3D, repLever?: THREE.Object3D, hammer?: THREE.Object3D, damper?: THREE.Object3D, damperLever?: THREE.Object3D, psi?: number, letoff?: number, phiCap?: number, liftA?: number, damperRestY?: number, liftPos?: number, liftVel?: number, leverPos?: number, leverVel?: number }>} */
+  /** @type {Map<number, { keyArm?: THREE.Object3D, wippen?: THREE.Object3D, jack?: THREE.Object3D, repLever?: THREE.Object3D, hammer?: THREE.Object3D, damper?: THREE.Object3D, damperLever?: THREE.Object3D, psi?: number, letoff?: number, phiCap?: number, liftA?: number, damperRestY?: number, liftPos?: number }>} */
   const units = new Map();
   let frame = null;
   let damperTray = null;
   let trayRestY = null;
   let trayPos = 0;
-  let trayVel = 0;
 
   root.traverse((obj) => {
     const ex = extras(obj);
@@ -220,34 +157,18 @@ export function buildActionRig(root, noteMap) {
         pedalQ,
       );
 
-      let leverRad = unit.leverPos ?? 0;
       if (unit.damperLever) {
-        const leverStep = integrateSpring(
-          leverRad,
-          unit.leverVel ?? 0,
-          targetLever,
-          LEVER_SPRING,
-          LEVER_DAMP,
-          LEVER_MASS,
-          dt,
-        );
-        unit.leverPos = leverStep.pos;
-        unit.leverVel = leverStep.vel;
-        leverRad = unit.leverPos;
-        unit.damperLever.rotation.x = leverRad;
+        unit.damperLever.rotation.x = targetLever;
       }
 
       if (unit.damper && unit.damperRestY != null) {
-        const headStep = integrateDamperHead(
+        unit.liftPos = smoothDamper(
           unit.liftPos ?? 0,
-          unit.liftVel ?? 0,
           targetLift,
-          leverRad,
-          headMassForNote(note),
           dt,
+          DAMPER_RISE_TAU,
+          DAMPER_DROP_TAU,
         );
-        unit.liftPos = headStep.pos;
-        unit.liftVel = headStep.vel;
         unit.damper.position.y = unit.damperRestY + unit.liftPos;
       }
     },
@@ -255,27 +176,19 @@ export function buildActionRig(root, noteMap) {
       if (!damperTray || trayRestY == null) return;
       const pedalQ = Math.max(0, Math.min(1, pedalRotX * PEDAL_Q));
       const targetOffset = (DPEDAL_LIFT / HEAD_LIFT_GAIN) * pedalQ;
-      const step = integrateSpring(
+      trayPos = smoothDamper(
         trayPos,
-        trayVel,
         targetOffset,
-        TRAY_SPRING,
-        TRAY_DAMP,
-        TRAY_MASS,
         dt,
+        TRAY_RISE_TAU,
+        TRAY_DROP_TAU,
       );
-      trayPos = step.pos;
-      trayVel = step.vel;
       damperTray.position.y = trayRestY + trayPos;
     },
     reset() {
       trayPos = 0;
-      trayVel = 0;
       for (const unit of units.values()) {
         unit.liftPos = 0;
-        unit.liftVel = 0;
-        unit.leverPos = 0;
-        unit.leverVel = 0;
       }
       for (const note of noteMap.keys()) {
         this.apply(note, 0, 0, 0, 0);

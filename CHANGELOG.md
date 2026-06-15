@@ -26,10 +26,9 @@ The version here tracks `version` in
   JS temporal-dead-zone and stopped ``controls.update()`` from running.
 - **Realistic web damper dynamics.** Driver targets match Blender
   ``lift_exprs`` (linear past the ``DGAP`` contact, ``max(key,pedal)``).
-  Underlevers, damper heads, the sustain tray, and the pedal each integrate as
-  spring-damper masses; heads track the wire-implied lift from the underlever,
-  drop with gravity only on full release, and bass dampers carry more inertia
-  than treble.
+  Damper heads, underlevers, the sustain tray, and the pedal use monotonic
+  exponential easing (no spring ringing while a key or the sustain pedal is
+  held).
 
 ## [0.7.5] - 2026-06-15
 
