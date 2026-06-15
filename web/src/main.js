@@ -107,6 +107,11 @@ let midiAccess = null;
 let allowMidiAutoConnect = false;
 let prevMidiPortCount = 0;
 const pointerNotes = new Set();
+/** Click vs drag threshold (px) — lets OrbitControls keep the full pointer lifecycle. */
+const POINTER_DRAG_PX = 5;
+let pointerDownXY = null;
+let pointerDragged = false;
+let pendingPointerNote = null;
 // Sampled-grand sound engine for the no-MIDI play path (silent during live
 // MIDI, where the hardware piano makes its own sound).
 const audio = new PianoAudio();
@@ -553,24 +558,40 @@ function pickKeyAtClient(clientX, clientY) {
   return piano.pick(raycaster);
 }
 
-function onCanvasPointerDown(event) {
+function onPointerDownCapture(event) {
   if (event.button !== 0) return;
-  const note = pickKeyAtClient(event.clientX, event.clientY);
-  if (note != null) {
-    // Capture phase, before OrbitControls bubble handler — play the key.
-    cancelCameraTween();
-    event.stopPropagation();
-    localNoteOn(note, 100);
-    pointerNotes.add(note);
-    return;
-  }
   cancelCameraTween();
+  pointerDownXY = [event.clientX, event.clientY];
+  pointerDragged = false;
+  pendingPointerNote = pickKeyAtClient(event.clientX, event.clientY);
+  // Play on press; if the user drags to orbit, onPointerMove releases the note.
+  if (pendingPointerNote != null) {
+    localNoteOn(pendingPointerNote, 100);
+    pointerNotes.add(pendingPointerNote);
+  }
 }
 
-function onPointerUp() {
-  if (!pointerNotes.size) return;
-  for (const note of pointerNotes) localNoteOff(note);
-  pointerNotes.clear();
+function onPointerMove(event) {
+  if (pointerDownXY == null || pointerDragged) return;
+  const dx = event.clientX - pointerDownXY[0];
+  const dy = event.clientY - pointerDownXY[1];
+  if (dx * dx + dy * dy <= POINTER_DRAG_PX * POINTER_DRAG_PX) return;
+  pointerDragged = true;
+  pendingPointerNote = null;
+  if (pointerNotes.size) {
+    for (const note of pointerNotes) localNoteOff(note);
+    pointerNotes.clear();
+  }
+}
+
+function onPointerUp(event) {
+  if (pointerNotes.size) {
+    for (const note of pointerNotes) localNoteOff(note);
+    pointerNotes.clear();
+  }
+  pointerDownXY = null;
+  pointerDragged = false;
+  pendingPointerNote = null;
 }
 
 async function init() {
@@ -786,10 +807,12 @@ async function init() {
 
 bindViewPresetClearOnUserInput();
 
-renderer.domElement.addEventListener("pointerdown", onCanvasPointerDown, {
+renderer.domElement.addEventListener("pointerdown", onPointerDownCapture, {
   capture: true,
 });
+renderer.domElement.addEventListener("pointermove", onPointerMove);
 window.addEventListener("pointerup", onPointerUp);
+window.addEventListener("pointercancel", onPointerUp);
 
 function onResize() {
   const w = window.innerWidth;
