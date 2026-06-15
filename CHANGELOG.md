@@ -7,6 +7,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 The version here tracks `version` in
 `extension/steinway_midi_piano/blender_manifest.toml`.
 
+## [0.7.3] - 2026-06-15
+
+### Fixed
+- **Six tuning pins no longer float above the pin field.** The damper-lip slab
+  no longer cantilevers over the pin ranks (plate cut v4), and the per-pin
+  surface probe peels through any remaining overlay by dropping straight below
+  each spot instead of drifting on sloped hits. Before, six treble pins sat on
+  the slab underside ~0.91 with no web below, ~37-39 mm above their neighbors.
+
 ## [0.7.2] - 2026-06-11
 
 ### Fixed

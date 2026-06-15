@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "steinway_midi_piano"
-version = "0.7.2"
+version = "0.7.3"
 name = "Steinway MIDI Piano"
 tagline = "Play an imported Steinway grand live from MIDI"
 maintainer = "Tri <trimpham98@gmail.com>"

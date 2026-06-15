@@ -32,13 +32,16 @@ OLD_PINS = "String Pins"
 TUNING_PINS = "Tuning_Pins"
 HITCH_PINS = "Hitch_Pins"
 CAPO_MARK = "steinway_capo_cut"
-CAPO_VERSION = 3
+CAPO_VERSION = 4
 CAPO_SETBACK = 0.018     # capo (web cut) line sits this far in front of strike
 LIP_TRIM = 0.016         # raised front-slab rear edge: this far behind strike
+PIN_TRIM = (strings_mod.RANK_REL0
+            - (strings_mod.RANKS - 1) * strings_mod.RANK_PITCH - 0.005)
 
 PIN_R = strings_mod.PIN_R
 PIN_LEN = 0.032          # exposed pin above the local plate surface
 HITCH_R = 0.0018
+WEB_Z = (0.868, 0.882)   # flat pin-field top (raised bars/struts sit above)
 
 
 def _capo_line():
@@ -96,11 +99,30 @@ def _trim_damper_lip(bm, mw, a, b):
         vs.update(f.verts)
         es.update(f.edges)
     geom += list(vs) + list(es)
+    plane_no = (inv3 @ Vector((-b, 1.0, 0.0))).normalized()
     bmesh.ops.bisect_plane(
         bm, geom=geom,
         plane_co=mw.inverted() @ Vector((0.0, a + LIP_TRIM, 0.9)),
-        plane_no=(inv3 @ Vector((-b, 1.0, 0.0))).normalized(),
+        plane_no=plane_no,
         clear_outer=True)
+
+    # The slab also cantilevers forward over the pin field (rogue pins sat on
+    # its underside ~0.91 with nothing below). Drop everything from the rear
+    # pin rank toward the strike line so the web stays open like a real plate.
+    geom = list(slab)
+    vs, es = set(), set()
+    for f in slab:
+        if not f.is_valid:
+            continue
+        vs.update(f.verts)
+        es.update(f.edges)
+    geom = [f for f in slab if f.is_valid] + list(vs) + list(es)
+    if geom:
+        bmesh.ops.bisect_plane(
+            bm, geom=geom,
+            plane_co=mw.inverted() @ Vector((0.0, a + PIN_TRIM, 0.9)),
+            plane_no=plane_no,
+            clear_outer=True)
 
     # Close the slab's open cross-section: the deck and the underside skin
     # are separate sheets, so the cut leaves two boundary rims facing each
@@ -205,13 +227,28 @@ def _make_pins(courses):
     down = Vector((0.0, 0.0, -1.0))
 
     def surface(px, py):
-        """Local plate top under a pin spot; raised geometry counts too, so a
-        fallback pin stands ON a bar rather than buried inside it."""
-        if bvh is not None:
-            hit = bvh.ray_cast(Vector((px, py, 0.95)), down, 0.15)
-            if hit[0] is not None and hit[0].z >= 0.84:
-                return hit[0].z
-        return 0.878
+        """Local plate top under a pin spot.
+
+        Peel through overlays (the damper-lip slab ~0.91 sits over part of the
+        pin field) and prefer the flat web. Spots with no flat web underneath
+        still stand on raised bars/struts rather than buried inside them.
+        """
+        if bvh is None:
+            return 0.878
+        origin = Vector((px, py, 0.95))
+        raised = None
+        for _ in range(12):
+            hit = bvh.ray_cast(origin, down, 0.15)
+            if hit[0] is None or hit[0].z < 0.84:
+                break
+            z = hit[0].z
+            if WEB_Z[0] <= z <= WEB_Z[1]:
+                return z
+            raised = z
+            # Drop straight below (px, py): hit points drift on sloped faces and
+            # a tiny offset along the ray never peels through thin overlays.
+            origin = Vector((px, py, hit[0].z - 0.002))
+        return raised if raised is not None else 0.878
 
     tv, tf = [], []
     tuning = 0
