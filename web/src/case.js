@@ -15,12 +15,15 @@ const DEFAULTS = {
   lid_open: 1,
 };
 
-const CASE_TAU = 0.38;
+// Seconds for a full open or close. The lid moves on a time-based eased tween
+// (not exponential smoothing) so it glides at a stately, even pace.
+const LID_ANIM_DURATION = 2.3;
 
 // Phased open/close so the prop clears the lid instead of clipping through it.
 // Closing (lidOpen 1 -> 0): the lid first lifts slightly past its open angle to
 // raise the cup off the prop tip, holds there while the prop folds flat, then
-// lowers all the way shut. Opening reverses it.
+// lowers all the way shut. Opening reverses it. Every segment uses smoothstep
+// so the lid/prop velocity is continuous across the phase boundaries (no jerk).
 const LID_OVEREXTEND = 0.12; // rad the lid rises above its open rest pose
 const LIFT_T = 0.86; // lidOpen in [LIFT_T,1]: lid lifting off the prop
 const FOLD_T = 0.4; // lidOpen in [FOLD_T,LIFT_T]: prop folds; below: lid descends
@@ -31,29 +34,32 @@ function lerp(a, b, u) {
 function clamp01(u) {
   return u < 0 ? 0 : u > 1 ? 1 : u;
 }
+// Smoothstep: zero slope at both ends, so segments meet without a velocity jump.
+function smoothstep(u) {
+  u = clamp01(u);
+  return u * u * (3 - 2 * u);
+}
+// Ease-in-out for the overall tween so it starts and stops gently.
+function easeInOut(u) {
+  u = clamp01(u);
+  return u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2;
+}
 
 // Lid rotation offset from its open rest pose: negative = lifted above open,
 // positive = rotated down toward shut (up to lidTilt = flat/closed).
 function lidCloseOffset(t, lidTilt) {
-  if (t >= LIFT_T) return lerp(0, -LID_OVEREXTEND, (1 - t) / (1 - LIFT_T));
+  if (t >= LIFT_T) return -LID_OVEREXTEND * smoothstep((1 - t) / (1 - LIFT_T));
   if (t >= FOLD_T) return -LID_OVEREXTEND;
-  return lerp(-LID_OVEREXTEND, lidTilt, (FOLD_T - t) / FOLD_T);
+  return lerp(-LID_OVEREXTEND, lidTilt, smoothstep((FOLD_T - t) / FOLD_T));
 }
 
 // Prop fold: 0 = upright, 1 = flat. Only folds once the lid has lifted clear.
 function propFoldFrac(t) {
-  return clamp01((LIFT_T - t) / (LIFT_T - FOLD_T));
+  return smoothstep((LIFT_T - t) / (LIFT_T - FOLD_T));
 }
 
 function extras(obj) {
   return obj.userData?.extras ?? obj.userData ?? {};
-}
-
-function smoothStep(current, target, dt, tau = CASE_TAU) {
-  if (dt <= 0) return target;
-  if (Math.abs(target - current) < 1e-4) return target;
-  const alpha = 1 - Math.exp(-dt / tau);
-  return current + (target - current) * alpha;
 }
 
 /**
@@ -140,24 +146,38 @@ export function buildCaseRig(root, manifestCase) {
 /** @param {object} [manifestDefaults] */
 export function createCaseState(manifestDefaults) {
   const d = { ...DEFAULTS, ...manifestDefaults };
-  const pose = { lidOpen: d.lid_open };
+  const v = d.lid_open;
   return {
-    target: { ...pose },
-    current: { ...pose },
+    target: { lidOpen: v },
+    current: { lidOpen: v },
+    from: v,
+    animTo: v,
+    elapsed: 0,
   };
 }
 
 /**
- * @param {{ target: object, current: object }} state
+ * Drive the lid on a fixed-duration eased tween toward `target.lidOpen`.
+ * @param {{ target: object, current: object, from: number, animTo: number, elapsed: number }} state
  * @param {ReturnType<typeof buildCaseRig>} rig
- * @param {number} dt
+ * @param {number} dt seconds
  */
 export function stepCase(state, rig, dt) {
-  state.current.lidOpen = smoothStep(
-    state.current.lidOpen,
-    state.target.lidOpen,
-    dt,
-  );
+  // A new target restarts the tween from wherever the lid currently is.
+  if (state.target.lidOpen !== state.animTo) {
+    state.from = state.current.lidOpen;
+    state.animTo = state.target.lidOpen;
+    state.elapsed = 0;
+  }
+  const animating = state.from !== state.animTo && state.elapsed < LID_ANIM_DURATION;
+  if (animating) {
+    // Clamp dt so a frame hitch (or a backgrounded tab) can't snap the lid.
+    state.elapsed += Math.min(dt, 0.05);
+    const u = clamp01(state.elapsed / LID_ANIM_DURATION);
+    state.current.lidOpen = lerp(state.from, state.animTo, easeInOut(u));
+  } else {
+    state.current.lidOpen = state.animTo;
+  }
   rig.apply(state.current);
-  return Math.abs(state.current.lidOpen - state.target.lidOpen) >= 1e-3;
+  return animating;
 }
