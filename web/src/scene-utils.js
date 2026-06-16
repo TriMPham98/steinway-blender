@@ -254,28 +254,27 @@ function prepMaps(mat) {
 }
 
 function lacquerFromExport(mat, { matte, lite }) {
-  const roughness =
-    typeof mat.roughness === "number"
-      ? mat.roughness
-      : matte
-        ? lite
-          ? 0.85
-          : 1.0
-        : 0.1;
+  const shiny = !matte;
+  const roughness = matte
+    ? lite
+      ? 0.85
+      : 1.0
+    : lite
+      ? 0.12
+      : 0.06;
   return new THREE.MeshPhysicalMaterial({
     // Blender base is pure black; lift it a hair so unreflected areas read as
     // deep charcoal (mimics Blender's view-transform black lift) instead of an
     // ACES-crushed void that flattens the piano into a silhouette.
-    color: new THREE.Color(lite ? 0xcfc8b8 : 0x0a0a0a),
+    color: new THREE.Color(lite ? 0xcfc8b8 : shiny ? 0x12141a : 0x0a0a0a),
     roughness,
     metalness: 0,
-    clearcoat: matte ? (lite ? 0 : 0.12) : lite ? 0.28 : 0.85,
-    clearcoatRoughness: matte ? 0.4 : lite ? 0.22 : 0.06,
-    // Glossy lacquer gets its form from reflecting the room — the old 0.52 barely
-    // picked up the environment, so the black lid looked flat. Crank it up.
-    envMapIntensity: lite ? 0.7 : matte ? 0.95 : 1.35,
-    specularIntensity: lite ? 0.65 : 0.62,
-    specularColor: new THREE.Color(lite ? 0xffffff : 0xd0d4e0),
+    clearcoat: matte ? (lite ? 0 : 0.12) : lite ? 0.35 : 1.0,
+    clearcoatRoughness: matte ? 0.4 : lite ? 0.18 : 0.03,
+    // Glossy lacquer has almost no diffuse color — it reads through IBL highlights.
+    envMapIntensity: lite ? 0.75 : matte ? 0.95 : 1.75,
+    specularIntensity: lite ? 0.7 : shiny ? 0.88 : 0.62,
+    specularColor: new THREE.Color(lite ? 0xffffff : 0xd8dce8),
   });
 }
 
@@ -283,19 +282,26 @@ function lacquerFromExport(mat, { matte, lite }) {
 function tuneMetal(mat, fallbackColor, fallbackRough) {
   prepMaps(mat);
   mat.metalness = 1.0;
-  if (!mat.roughnessMap && typeof mat.roughness !== "number") {
-    mat.roughness = fallbackRough;
-  }
-  mat.envMapIntensity = 1.05;
+  mat.roughness = fallbackRough;
+  mat.envMapIntensity = 1.28;
   if (mat.normalMap) mat.normalScale.set(1.1, 1.1);
   // The materialiq metals export a flat *grayscale* base-color texture; the gold/
   // brass/copper hue lived in the Blender base-color factor, which glTF dropped
   // (defaults to white). Used as albedo, that gray map makes the metal mirror the
-  // gray environment and read as chrome. Drop it and apply the metal's own tint so
-  // reflections pick up the right color — normal + roughness/metalness maps stay.
+  // gray environment and read as chrome. Drop it and apply the metal's own tint.
+  // The packed metallic-roughness map averages ~0.63 roughness (satin) — strip it
+  // so the scalar fallback drives a polished cast-plate read; keep the normal map.
   if (mat.map) {
     mat.map.dispose?.();
     mat.map = null;
+  }
+  if (mat.roughnessMap) {
+    mat.roughnessMap.dispose?.();
+    mat.roughnessMap = null;
+  }
+  if (mat.metalnessMap) {
+    mat.metalnessMap.dispose?.();
+    mat.metalnessMap = null;
   }
   mat.color = new THREE.Color(fallbackColor);
   // No polygonOffset: the old -2 bias pulled metals toward the camera and let the
@@ -340,13 +346,13 @@ export function refineMaterials(root) {
     } else if (/^sy_/i.test(name)) {
       next = lacquerFromExport(mat, { matte: /matte/i.test(name), lite: false });
     } else if (/gold/i.test(name)) {
-      next = tuneMetal(mat, 0xd4af37, 0.3);
+      next = tuneMetal(mat, 0xd4af37, 0.24);
     } else if (/brass/i.test(name)) {
-      next = tuneMetal(mat, 0xc6a456, 0.32);
+      next = tuneMetal(mat, 0xc6a456, 0.2);
     } else if (/copper/i.test(name)) {
-      next = tuneMetal(mat, 0xb87333, 0.34);
+      next = tuneMetal(mat, 0xb87333, 0.28);
     } else if (/steel|chrome|metal/i.test(name)) {
-      next = tuneMetal(mat, 0xc2c6cd, 0.28);
+      next = tuneMetal(mat, 0xc2c6cd, 0.22);
     } else if (/wood|beech|maple/i.test(name)) {
       next = tuneWood(mat);
     } else if (/plastic/i.test(name)) {
@@ -420,8 +426,9 @@ function roomEnvironment(pmrem) {
     m.rotation.x = rx;
     envScene.add(m);
   };
-  makePanel(6, 2.2, 0, 7, 1.5, -Math.PI / 2); // ceiling strip overhead
-  makePanel(4, 3, 0, 4, 6, 0); // front fill window
+  makePanel(7, 2.6, 0, 7.5, 1.5, -Math.PI / 2); // ceiling strip overhead
+  makePanel(5, 3.5, 0, 4.5, 6.5, 0); // front fill window
+  makePanel(2.8, 1.6, -3.5, 3.2, 2, 0.15); // side kicker for lacquer edge highlights
 
   return pmrem.fromScene(envScene, 0.04).texture;
 }
