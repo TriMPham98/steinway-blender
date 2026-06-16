@@ -135,6 +135,30 @@ _LID_TRIM_OBJECTS = (
 )
 _LID_WOOD_OBJECTS = ("Inside Rim Case",)
 
+# Case parts driven by scene props in build/case.py — keep out of Piano_Static.
+_CASE_MOVING = frozenset({
+    "Fall Board",
+    "Large Lid Section",
+    "Small Lid Section",
+    "Long Continuos Hinge BOTTOM",
+    "Long Continous Hinge ROD",
+    "Long Continous Hinge Screws",
+    "Large Lid Rubber Cushions",
+    "Long Continuos Hinge TOP",
+    "Small Lid Rubber Cushions",
+})
+_CASE_TAGS = {
+    "Large Lid Section": "lid_big",
+    "Lid Fold Hinge": "lid_fold_hinge",
+    "Fall Board": "fallboard",
+}
+_CASE_FOLD_BACK = 3.05
+_CASE_FALL_CLOSED = 1.48
+
+
+def _is_case_moving(obj):
+    return obj.name in _CASE_MOVING
+
 
 def _is_bench_leg(obj):
     return obj.name in _BENCH_LEG_NAMES
@@ -271,6 +295,8 @@ def _join_static():
             continue
         if _is_key(obj) or _is_pedal(obj) or _is_bench(obj) or _is_bench_leg(obj):
             continue
+        if _is_case_moving(obj):
+            continue
         if _is_action(obj):     # moving parts (with --with-action) stay separate
             continue
         obj.select_set(True)
@@ -283,6 +309,58 @@ def _join_static():
     bpy.ops.object.join()
     bpy.context.active_object.name = "Piano_Static"
     return len(targets)
+
+
+def _lid_tilt(big):
+    """Slope of the open lid plane across x (matches build/case.py)."""
+    import math
+    import mathutils
+
+    mw = big.matrix_world
+    cols = {}
+    for v in big.data.vertices:
+        w = mw @ v.co
+        k = round(w.x, 2)
+        if k not in cols or w.z < cols[k][1]:
+            cols[k] = (w.x, w.z)
+    pts = sorted(cols.values())
+    (x0, z0), (x1, z1) = pts[0], pts[-1]
+    return math.atan2(z1 - z0, x1 - x0)
+
+
+def _tag_case_parts():
+    import bpy
+
+    tagged = []
+    for name, part in _CASE_TAGS.items():
+        obj = bpy.data.objects.get(name)
+        if obj is None:
+            continue
+        obj["case_part"] = part
+        tagged.append(name)
+    return tagged
+
+
+def _case_manifest():
+    import bpy
+
+    big = bpy.data.objects.get("Large Lid Section")
+    tilt = round(_lid_tilt(big), 6) if big is not None and big.type == "MESH" else 0.27
+    return {
+        "lid_tilt": tilt,
+        "fold_back": _CASE_FOLD_BACK,
+        "fall_closed": _CASE_FALL_CLOSED,
+        "nodes": {
+            "lid_big": "Large Lid Section",
+            "lid_fold_hinge": "Lid Fold Hinge",
+            "fallboard": "Fall Board",
+        },
+        "defaults": {
+            "lid_open": 1.0,
+            "lid_flap_fold": 0.0,
+            "fallboard_open": 1.0,
+        },
+    }
 
 
 def _key_manifest():
@@ -310,6 +388,7 @@ def _key_manifest():
         "keys": keys,
         "pedal": pedal,
         "press_angle_deg": 3.5,
+        "case": _case_manifest(),
         "defaults": {
             "press_angle_deg": 3.5,
             "snappiness": 1.0,
@@ -478,6 +557,9 @@ def main():
     _remove_bench_legs()
     _strip_stray_curves()
     _fix_lid_trim_zfight()
+    case_tagged = _tag_case_parts()
+    if case_tagged:
+        print(f"[export] case parts tagged: {', '.join(case_tagged)}")
     merged = _join_static()
     manifest = _key_manifest()
     with open(manifest_path, "w", encoding="utf-8") as fh:

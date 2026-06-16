@@ -289,6 +289,37 @@ body,
   cursor: not-allowed;
 }
 
+.slider-field {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.55rem;
+}
+
+.slider-field:first-of-type {
+  margin-top: 0.35rem;
+}
+
+.slider-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.slider-label output {
+  font-size: 0.72rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink);
+}
+
+.slider-field input[type="range"] {
+  width: 100%;
+  margin: 0;
+  accent-color: rgba(255, 255, 255, 0.85);
+}
+
 /* ---------- Transport ---------- */
 .transport {
   display: grid;

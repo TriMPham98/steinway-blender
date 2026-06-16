@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { PianoController } from "./piano.js";
+import { buildCaseRig, createCaseState, stepCase } from "./case.js";
 import { LiveSession } from "./live.js";
 import { PianoAudio } from "./audio.js";
 import { MIDI_HIGH, MIDI_LOW } from "./anim.js";
@@ -39,6 +40,13 @@ const ui = {
   viewFront: document.getElementById("view-front"),
   viewTop: document.getElementById("view-top"),
   viewSeated: document.getElementById("view-seated"),
+  caseControls: document.getElementById("case-controls"),
+  lidOpen: document.getElementById("lid-open"),
+  lidOpenVal: document.getElementById("lid-open-val"),
+  lidFlap: document.getElementById("lid-flap"),
+  lidFlapVal: document.getElementById("lid-flap-val"),
+  fallboard: document.getElementById("fallboard"),
+  fallboardVal: document.getElementById("fallboard-val"),
   menuToggle: document.getElementById("menu-toggle"),
   drawer: document.getElementById("drawer"),
   drawerClose: document.getElementById("drawer-close"),
@@ -101,6 +109,10 @@ const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 let piano = null;
 let live = null;
+/** @type {ReturnType<typeof buildCaseRig> | null} */
+let caseRig = null;
+/** @type {ReturnType<typeof createCaseState> | null} */
+let caseState = null;
 /** @type {MIDIAccess | null} */
 let midiAccess = null;
 /** After intro; auto-start live MIDI when an input is available. */
@@ -416,6 +428,56 @@ function setTransportRunning(running) {
   ui.port.disabled = running;
 }
 
+function lidOpenLabel(v) {
+  if (v >= 0.98) return "Open";
+  if (v <= 0.02) return "Closed";
+  return `${Math.round(v * 100)}%`;
+}
+
+function lidFlapLabel(v) {
+  if (v <= 0.02) return "Flat";
+  if (v >= 0.98) return "Folded";
+  return `${Math.round(v * 100)}%`;
+}
+
+function fallboardLabel(v) {
+  if (v >= 0.98) return "Open";
+  if (v <= 0.02) return "Closed";
+  return `${Math.round(v * 100)}%`;
+}
+
+function syncCaseOutputs() {
+  if (!caseState) return;
+  const { target } = caseState;
+  ui.lidOpen.value = String(target.lidOpen);
+  ui.lidFlap.value = String(target.lidFlapFold);
+  ui.fallboard.value = String(target.fallboardOpen);
+  ui.lidOpenVal.textContent = lidOpenLabel(target.lidOpen);
+  ui.lidFlapVal.textContent = lidFlapLabel(target.lidFlapFold);
+  ui.fallboardVal.textContent = fallboardLabel(target.fallboardOpen);
+}
+
+function bindCaseControls() {
+  const onLid = () => {
+    if (!caseState) return;
+    caseState.target.lidOpen = Number(ui.lidOpen.value);
+    ui.lidOpenVal.textContent = lidOpenLabel(caseState.target.lidOpen);
+  };
+  const onFlap = () => {
+    if (!caseState) return;
+    caseState.target.lidFlapFold = Number(ui.lidFlap.value);
+    ui.lidFlapVal.textContent = lidFlapLabel(caseState.target.lidFlapFold);
+  };
+  const onFall = () => {
+    if (!caseState) return;
+    caseState.target.fallboardOpen = Number(ui.fallboard.value);
+    ui.fallboardVal.textContent = fallboardLabel(caseState.target.fallboardOpen);
+  };
+  ui.lidOpen.addEventListener("input", onLid);
+  ui.lidFlap.addEventListener("input", onFlap);
+  ui.fallboard.addEventListener("input", onFall);
+}
+
 async function loadManifest() {
   const res = await fetch(MANIFEST_URL);
   if (!res.ok) throw new Error(`manifest ${res.status}`);
@@ -688,6 +750,16 @@ async function init() {
   piano = new PianoController(model, manifest);
   piano.applySettings(feelSettings);
 
+  caseRig = buildCaseRig(model, manifest.case);
+  if (caseRig.available) {
+    const caseDefaults = manifest.case?.defaults ?? {};
+    caseState = createCaseState(caseDefaults);
+    caseRig.reset();
+    ui.caseControls.hidden = false;
+    bindCaseControls();
+    syncCaseOutputs();
+  }
+
   const ready = piano.keyCount;
 
   live = new LiveSession(piano, {
@@ -830,6 +902,9 @@ function animate() {
   const dt = clock.getDelta();
   if (!live?.isRunning) {
     piano?.step(dt);
+  }
+  if (caseRig && caseState) {
+    stepCase(caseState, caseRig, dt);
   }
   updateCameraTween(dt);
   controls.update();

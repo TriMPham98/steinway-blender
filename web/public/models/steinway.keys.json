@@ -443,6 +443,21 @@
   ],
   "pedal": "Right Sustain Pedal",
   "press_angle_deg": 3.5,
+  "case": {
+    "lid_tilt": 0.53427,
+    "fold_back": 3.05,
+    "fall_closed": 1.48,
+    "nodes": {
+      "lid_big": "Large Lid Section",
+      "lid_fold_hinge": "Lid Fold Hinge",
+      "fallboard": "Fall Board"
+    },
+    "defaults": {
+      "lid_open": 1.0,
+      "lid_flap_fold": 0.0,
+      "fallboard_open": 1.0
+    }
+  },
   "defaults": {
     "press_angle_deg": 3.5,
     "snappiness": 1.0,
