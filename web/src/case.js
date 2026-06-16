@@ -17,6 +17,34 @@ const DEFAULTS = {
 
 const CASE_TAU = 0.38;
 
+// Phased open/close so the prop clears the lid instead of clipping through it.
+// Closing (lidOpen 1 -> 0): the lid first lifts slightly past its open angle to
+// raise the cup off the prop tip, holds there while the prop folds flat, then
+// lowers all the way shut. Opening reverses it.
+const LID_OVEREXTEND = 0.12; // rad the lid rises above its open rest pose
+const LIFT_T = 0.86; // lidOpen in [LIFT_T,1]: lid lifting off the prop
+const FOLD_T = 0.4; // lidOpen in [FOLD_T,LIFT_T]: prop folds; below: lid descends
+
+function lerp(a, b, u) {
+  return a + (b - a) * u;
+}
+function clamp01(u) {
+  return u < 0 ? 0 : u > 1 ? 1 : u;
+}
+
+// Lid rotation offset from its open rest pose: negative = lifted above open,
+// positive = rotated down toward shut (up to lidTilt = flat/closed).
+function lidCloseOffset(t, lidTilt) {
+  if (t >= LIFT_T) return lerp(0, -LID_OVEREXTEND, (1 - t) / (1 - LIFT_T));
+  if (t >= FOLD_T) return -LID_OVEREXTEND;
+  return lerp(-LID_OVEREXTEND, lidTilt, (FOLD_T - t) / FOLD_T);
+}
+
+// Prop fold: 0 = upright, 1 = flat. Only folds once the lid has lifted clear.
+function propFoldFrac(t) {
+  return clamp01((LIFT_T - t) / (LIFT_T - FOLD_T));
+}
+
 function extras(obj) {
   return obj.userData?.extras ?? obj.userData ?? {};
 }
@@ -88,18 +116,18 @@ export function buildCaseRig(root, manifestCase) {
 
       if (lidBig) {
         lidBig.rotation.z =
-          rest.lidBigZ - (1 - lidOpen) * cfg.lid_tilt;
+          rest.lidBigZ - lidCloseOffset(lidOpen, cfg.lid_tilt);
       }
       if (foldHinge) {
         foldHinge.rotation.x = rest.foldX;
       }
 
-      // Fold the prop stick down onto the rim as the lid closes. Blender drives
-      // its hinge Y; glTF maps that to Three.js rotation.z (same sign flip as
-      // the lid). Prop + cup share the hinge pivot, so they fold together.
-      const propAngle = (1 - lidOpen) * cfg.prop_fold;
+      // Fold the prop stick down onto the rim, but only after the lid has lifted
+      // off it (see lidCloseOffset). Blender drives the prop's hinge Y; glTF
+      // maps that to Three.js rotation.z (same sign flip as the lid).
+      const fold = propFoldFrac(lidOpen);
       lidPropParts.forEach((part, i) => {
-        part.rotation.z = rest.propZ[i] - propAngle;
+        part.rotation.z = rest.propZ[i] - fold * cfg.prop_fold;
       });
     },
     /** Snap to the exported open rest pose. */
