@@ -367,6 +367,37 @@ body,
   transform: translateY(-1px);
 }
 
+/* ---------- Case toggle ---------- */
+.case-toggle {
+  width: 100%;
+  margin-top: 0.35rem;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--ink);
+  transition: transform 0.12s ease, background-color 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.case-toggle:hover {
+  background: var(--hover);
+  border-color: rgba(255, 255, 255, 0.28);
+  transform: translateY(-1px);
+}
+
+.case-toggle:active {
+  transform: scale(0.98);
+}
+
+.case-toggle[aria-pressed="true"] {
+  background: rgba(110, 168, 254, 0.18);
+  border-color: rgba(110, 168, 254, 0.55);
+}
+
 /* ---------- View presets ---------- */
 .views {
   display: grid;

@@ -135,6 +135,14 @@ _LID_TRIM_OBJECTS = (
 )
 _LID_WOOD_OBJECTS = ("Inside Rim Case",)
 
+# Lid prop stick — exported separately, re-origined onto the rim hinge by
+# build/case.py, so the web viewer can fold it down as the lid closes. The
+# hinge hardware (rod, screws, bracket) is the pivot and stays put in
+# Piano_Static; the cup rides the lid (see _CASE_MOVING below).
+_LID_PROP_PARTS = (
+    "Lid Support Prop",
+)
+
 # Case parts driven by scene props in build/case.py — keep out of Piano_Static.
 _CASE_MOVING = frozenset({
     "Fall Board",
@@ -146,11 +154,18 @@ _CASE_MOVING = frozenset({
     "Large Lid Rubber Cushions",
     "Long Continuos Hinge TOP",
     "Small Lid Rubber Cushions",
+    # Parented to the big lid by build/case.py so they swing with it; keep them
+    # out of Piano_Static. (Spine butt-hinge leaves + the prop's lid-side cup.)
+    "Lid Butt Hinge",
+    "Lid Butt Hinge.001",
+    "Lid Support Cup",
+    *_LID_PROP_PARTS,
 })
 _CASE_TAGS = {
     "Large Lid Section": "lid_big",
     "Lid Fold Hinge": "lid_fold_hinge",
     "Fall Board": "fallboard",
+    "Lid Support Prop": "lid_prop",
 }
 _CASE_FOLD_BACK = 3.05
 _CASE_FALL_CLOSED = 1.48
@@ -346,14 +361,18 @@ def _case_manifest():
 
     big = bpy.data.objects.get("Large Lid Section")
     tilt = round(_lid_tilt(big), 6) if big is not None and big.type == "MESH" else 0.27
+    prop = bpy.data.objects.get("Lid Support Prop")
+    prop_fold = round(float(prop.get("fold_angle", -1.0245)), 6) if prop else -1.0245
     return {
         "lid_tilt": tilt,
         "fold_back": _CASE_FOLD_BACK,
         "fall_closed": _CASE_FALL_CLOSED,
+        "prop_fold": prop_fold,
         "nodes": {
             "lid_big": "Large Lid Section",
             "lid_fold_hinge": "Lid Fold Hinge",
             "fallboard": "Fall Board",
+            "lid_prop": list(_LID_PROP_PARTS),
         },
         "defaults": {
             "lid_open": 1.0,

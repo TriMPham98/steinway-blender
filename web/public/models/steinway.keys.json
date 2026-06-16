@@ -447,10 +447,14 @@
     "lid_tilt": 0.53427,
     "fold_back": 3.05,
     "fall_closed": 1.48,
+    "prop_fold": -1.020012,
     "nodes": {
       "lid_big": "Large Lid Section",
       "lid_fold_hinge": "Lid Fold Hinge",
-      "fallboard": "Fall Board"
+      "fallboard": "Fall Board",
+      "lid_prop": [
+        "Lid Support Prop"
+      ]
     },
     "defaults": {
       "lid_open": 1.0,

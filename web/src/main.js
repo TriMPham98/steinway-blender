@@ -41,12 +41,7 @@ const ui = {
   viewTop: document.getElementById("view-top"),
   viewSeated: document.getElementById("view-seated"),
   caseControls: document.getElementById("case-controls"),
-  lidOpen: document.getElementById("lid-open"),
-  lidOpenVal: document.getElementById("lid-open-val"),
-  lidFlap: document.getElementById("lid-flap"),
-  lidFlapVal: document.getElementById("lid-flap-val"),
-  fallboard: document.getElementById("fallboard"),
-  fallboardVal: document.getElementById("fallboard-val"),
+  lidToggle: document.getElementById("btn-lid-toggle"),
   menuToggle: document.getElementById("menu-toggle"),
   drawer: document.getElementById("drawer"),
   drawerClose: document.getElementById("drawer-close"),
@@ -428,54 +423,20 @@ function setTransportRunning(running) {
   ui.port.disabled = running;
 }
 
-function lidOpenLabel(v) {
-  if (v >= 0.98) return "Open";
-  if (v <= 0.02) return "Closed";
-  return `${Math.round(v * 100)}%`;
-}
-
-function lidFlapLabel(v) {
-  if (v <= 0.02) return "Flat";
-  if (v >= 0.98) return "Folded";
-  return `${Math.round(v * 100)}%`;
-}
-
-function fallboardLabel(v) {
-  if (v >= 0.98) return "Open";
-  if (v <= 0.02) return "Closed";
-  return `${Math.round(v * 100)}%`;
-}
-
-function syncCaseOutputs() {
-  if (!caseState) return;
-  const { target } = caseState;
-  ui.lidOpen.value = String(target.lidOpen);
-  ui.lidFlap.value = String(target.lidFlapFold);
-  ui.fallboard.value = String(target.fallboardOpen);
-  ui.lidOpenVal.textContent = lidOpenLabel(target.lidOpen);
-  ui.lidFlapVal.textContent = lidFlapLabel(target.lidFlapFold);
-  ui.fallboardVal.textContent = fallboardLabel(target.fallboardOpen);
+function syncLidToggleLabel() {
+  if (!caseState || !ui.lidToggle) return;
+  const open = caseState.target.lidOpen > 0.5;
+  ui.lidToggle.textContent = open ? "Close lid" : "Open lid";
+  ui.lidToggle.setAttribute("aria-pressed", open ? "true" : "false");
 }
 
 function bindCaseControls() {
-  const onLid = () => {
+  ui.lidToggle?.addEventListener("click", () => {
     if (!caseState) return;
-    caseState.target.lidOpen = Number(ui.lidOpen.value);
-    ui.lidOpenVal.textContent = lidOpenLabel(caseState.target.lidOpen);
-  };
-  const onFlap = () => {
-    if (!caseState) return;
-    caseState.target.lidFlapFold = Number(ui.lidFlap.value);
-    ui.lidFlapVal.textContent = lidFlapLabel(caseState.target.lidFlapFold);
-  };
-  const onFall = () => {
-    if (!caseState) return;
-    caseState.target.fallboardOpen = Number(ui.fallboard.value);
-    ui.fallboardVal.textContent = fallboardLabel(caseState.target.fallboardOpen);
-  };
-  ui.lidOpen.addEventListener("input", onLid);
-  ui.lidFlap.addEventListener("input", onFlap);
-  ui.fallboard.addEventListener("input", onFall);
+    const open = caseState.target.lidOpen > 0.5;
+    caseState.target.lidOpen = open ? 0 : 1;
+    syncLidToggleLabel();
+  });
 }
 
 async function loadManifest() {
@@ -757,7 +718,7 @@ async function init() {
     caseRig.reset();
     ui.caseControls.hidden = false;
     bindCaseControls();
-    syncCaseOutputs();
+    syncLidToggleLabel();
   }
 
   const ready = piano.keyCount;

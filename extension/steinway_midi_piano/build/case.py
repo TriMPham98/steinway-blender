@@ -19,7 +19,8 @@ The controls live on the **scene** (Scene Properties > Custom Properties:
 ``fallboard_open``, ``lid_open``, ``lid_flap_fold``) - scene-level because a
 driver reading a property of the object it poses is a dependency cycle that
 Blender resolves nondeterministically. Slide or keyframe them. The lid prop
-stick stays put - hide it when closing the lid.
+stick is re-origined onto its rim hinge and driven by ``lid_open`` too, so it
+folds down flat as the lid closes instead of staying upright.
 
 Pure ``bpy``, headless-safe, idempotent (objects are tagged once rigged).
 """
@@ -31,7 +32,7 @@ import mathutils
 from mathutils import Vector
 
 RIGGED = "steinway_rigged"
-RIG_VERSION = 2
+RIG_VERSION = 5
 NAMEBOARD = "Name Board"
 
 FALLBOARD = "Fall Board"
@@ -45,6 +46,18 @@ LID_PARTS_BIG = ("Long Continuos Hinge BOTTOM", "Long Continous Hinge ROD",
                  "Long Continous Hinge Screws", "Large Lid Rubber Cushions")
 LID_PARTS_SMALL = ("Long Continuos Hinge TOP", "Small Lid Rubber Cushions")
 FOLD_BACK = 3.05                    # rad: front flap folded back on the lid
+
+# Lid prop stick: hinged on the rim, stands up to hold the lid. As the lid
+# closes it folds down flat into its trough instead of staying upright.
+LID_PROP = "Lid Support Prop"
+LID_PROP_CUP = "Lid Support Cup"        # rides the prop tip, under the lid
+LID_PROP_HINGE = "Lid Prop Hinge Rod"   # the rod the prop pivots on (along Y)
+LID_PROP_PIVOT = (0.849, -0.358, 0.953)  # fallback if the rod is missing
+LID_PROP_FOLD = -1.0245                  # fallback fold-down angle (rad, about Y)
+
+# Spine butt hinges: the lid-side leaves ride on the spine and must swing with
+# the big lid; the base leaves and pins stay bolted to the rim.
+LID_BUTT_HINGES = ("Lid Butt Hinge", "Lid Butt Hinge.001")
 
 
 def _scene_prop(name, default):
@@ -79,6 +92,27 @@ def _reorigin(obj, pivot_world):
         v.co -= local
     obj.data.update()
     obj.matrix_world = mw @ mathutils.Matrix.Translation(local)
+
+
+def _bake_basis(obj):
+    """Bake rotation and scale into the mesh, leaving a pure-translation node.
+
+    Two reasons: (1) a driver on a single rotation channel then rotates about
+    that *world* axis (the prop's authored X/Z tilt would otherwise twist a
+    local-Y fold out of its swing plane); (2) the LID PROP parts carry a tiny
+    ~0.0004 object scale with ~2000-unit mesh coords, which glTF keeps as a
+    micro-scaled node that three.js silently drops on load. Baking the basis
+    normalises them to scale 1 like every other case part. World pose is
+    preserved.
+    """
+    if obj.data.users > 1:
+        obj.data = obj.data.copy()
+    basis = obj.matrix_basis.to_3x3()  # rotation @ scale, no translation
+    for v in obj.data.vertices:
+        v.co = basis @ v.co
+    obj.data.update()
+    obj.rotation_euler = (0.0, 0.0, 0.0)
+    obj.scale = (1.0, 1.0, 1.0)
 
 
 def _nameboard():
@@ -204,9 +238,95 @@ def _rig_lid():
     return "rigged"
 
 
+def _prop_pivot():
+    """World pivot of the prop hinge (rod centre), with a constant fallback."""
+    rod = bpy.data.objects.get(LID_PROP_HINGE)
+    if rod is None or rod.type != "MESH" or not rod.data.vertices:
+        return Vector(LID_PROP_PIVOT)
+    pts = [rod.matrix_world @ v.co for v in rod.data.vertices]
+    return Vector((sum(p.x for p in pts) / len(pts),
+                   sum(p.y for p in pts) / len(pts),
+                   sum(p.z for p in pts) / len(pts)))
+
+
+def _prop_fold_angle(prop, pivot):
+    """Rotation about Y (rad) that lays the upright prop flat, pointing inward.
+
+    The prop swings in the X-Z plane (hinge rod runs along Y). Take its tip as
+    the vertex furthest from the pivot, then solve for the angle that drops the
+    tip to the pivot height with the stick pointing toward -X (the interior).
+    """
+    mw = prop.matrix_world
+    tip = max((mw @ v.co for v in prop.data.vertices),
+              key=lambda w: (w - pivot).length)
+    dx, dz = tip.x - pivot.x, tip.z - pivot.z
+    if abs(dx) < 1e-6 and abs(dz) < 1e-6:
+        return LID_PROP_FOLD
+    return math.atan2(dz, dx) - math.pi
+
+
+def _rig_lid_prop():
+    """Fold the prop stick on its rim hinge; ride the cup with the lid.
+
+    The cup is the receptacle on the lid underside, so it stays bolted to the
+    big lid (swings with it about the spine). The prop stick pivots
+    independently on its own rim hinge, folding flat as the lid closes.
+    """
+    prop = bpy.data.objects.get(LID_PROP)
+    cup = bpy.data.objects.get(LID_PROP_CUP)
+    if prop is None:
+        return "missing"
+    if prop.get(RIGGED, 0) == RIG_VERSION:
+        return "already-rigged"
+    pivot = _prop_pivot()
+    fold = _prop_fold_angle(prop, pivot)
+
+    # Prop: re-origin onto the hinge, normalise its basis, drive the fold.
+    if (prop.matrix_world.translation - pivot).length > 1e-4:
+        _reorigin(prop, pivot)
+    _bake_basis(prop)
+    _scene_prop("lid_open", 1.0)
+    _drive(prop, "rotation_euler", 1, f"(1-v)*{fold:.4f}", "lid_open")
+    prop["fold_angle"] = fold
+    prop[RIGGED] = RIG_VERSION
+    prop.update_tag()
+
+    # Cup: drop any fold driver it picked up from an older rig, normalise its
+    # basis, and parent it to the big lid so it swings with the lid.
+    if cup is not None:
+        cup.driver_remove("rotation_euler", 1)
+        cup.rotation_euler = (0.0, 0.0, 0.0)
+        _bake_basis(cup)
+        big = bpy.data.objects.get(LID_BIG)
+        if big is not None and cup.parent is not big:
+            cup.parent = big
+            cup.matrix_parent_inverse = big.matrix_world.inverted()
+        cup[RIGGED] = RIG_VERSION
+        cup.update_tag()
+    return "rigged"
+
+
+def _rig_lid_butt_hinges():
+    """Parent the spine's lid-side hinge leaves to the big lid so they swing."""
+    big = bpy.data.objects.get(LID_BIG)
+    if big is None:
+        return "missing"
+    done = []
+    for name in LID_BUTT_HINGES:
+        obj = bpy.data.objects.get(name)
+        if obj is None or obj.parent is big:
+            continue
+        obj.parent = big
+        obj.matrix_parent_inverse = big.matrix_world.inverted()
+        done.append(name)
+    return done or "already-rigged"
+
+
 def build():
     return {
         "nameboard": _nameboard(),
         "fallboard": _rig_fallboard(),
         "lid": _rig_lid(),
+        "lid_prop": _rig_lid_prop(),
+        "lid_butt_hinges": _rig_lid_butt_hinges(),
     }
