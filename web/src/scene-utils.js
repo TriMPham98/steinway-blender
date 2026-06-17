@@ -312,17 +312,16 @@ export function prepHingeTrim(root) {
 }
 
 /** Tune exported metals (color/roughness); depth is left to the geometry + log buffer. */
-function tuneMetal(mat, fallbackColor, fallbackRough) {
+function tuneMetal(mat, fallbackColor, fallbackRough, { doubleSided = true } = {}) {
   prepMaps(mat);
   mat.metalness = 1.0;
   mat.roughness = fallbackRough;
   mat.envMapIntensity = 1.28;
   if (mat.normalMap) mat.normalScale.set(1.1, 1.1);
-  // Render metal double-sided: the thin gold lid-spine trim (continuous-hinge
-  // leaves + screw plate) are flat shells whose winding faces *into* the lid, so
-  // single-sided FrontSide culls them and only the curved rod survives. The
-  // global side assignment below honors this DoubleSide flag.
-  mat.side = THREE.DoubleSide;
+  // Thin trim (hinge leaves, rim gold) needs DoubleSide; solid harp plate/rim and
+  // pin hardware are closed volumes — DoubleSide draws the back face at the same
+  // depth and z-fights (probe: two Cube016_3 hits at Δ0.00 mm).
+  mat.side = doubleSided ? THREE.DoubleSide : THREE.FrontSide;
   // The materialiq metals export a flat *grayscale* base-color texture; the gold/
   // brass/copper hue lived in the Blender base-color factor, which glTF dropped
   // (defaults to white). Used as albedo, that gray map makes the metal mirror the
@@ -474,37 +473,26 @@ const STRING_MAT_RE = /^(0C_Copper|Strings_Steel)/i;
 // 0A_Steel is hardware (pins/capo/agraffes), not speaking strings — leave it seated.
 
 const SOUNDBOARD_MESH_MAT_RE = /^2B_Wood_Beech_mqm$/i; // exact: excludes …_Bridge
+const PLATE_MAT_RE = /^0T_Brass_mqm_Plate$/i;
+
+function meshMatchesMaterial(mesh, re) {
+  const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  return mats.some((m) => m && re.test(m.name || ""));
+}
 
 /**
- * The exported soundboard mesh (2B_Wood_Beech_mqm) carries a *doubled* panel: the
- * structural slab top plus a thin duplicate "overlay" lens a few mm above it.
- * Both faces point at the camera, so wherever the two crowned surfaces cross they
- * z-fight into a fine speckle (polygonOffset can't help under logarithmicDepthBuffer).
- * A shift-click raycast confirms it: two Cube016_5 hits at Δ0.00 mm.
- *
- * Drop the upper duplicate, keeping the structural slab. The split is derived from
- * the mesh's own up-facing geometry (two Y clusters with a clear gap) rather than a
- * hardcoded height, so it survives reframing/rescaling. The slab fully backs the
- * removed lens, so the visible surface is unchanged apart from the flicker clearing.
- * @param {THREE.Object3D} root
+ * Drop a thin duplicate up-facing shell when the mesh has two separated Y layers.
+ * @param {THREE.Mesh} mesh
  * @returns {number} removed triangle count
  */
-export function dedupeSoundboardOverlay(root) {
-  const ps = root.getObjectByName("Piano_Static");
-  if (!ps) return 0;
-  let sb = null;
-  ps.traverse((o) => {
-    if (sb || !o.isMesh) return;
-    const mats = Array.isArray(o.material) ? o.material : [o.material];
-    if (mats.some((m) => m && SOUNDBOARD_MESH_MAT_RE.test(m.name || ""))) sb = o;
-  });
-  if (!sb?.geometry?.index) return 0;
+function dedupeOverlayOnMesh(mesh) {
+  if (!mesh?.geometry?.index) return 0;
 
-  const geo = sb.geometry;
+  const geo = mesh.geometry;
   const pos = geo.attributes.position;
   const idx = geo.index;
-  sb.updateMatrixWorld(true);
-  const mw = sb.matrixWorld;
+  mesh.updateMatrixWorld(true);
+  const mw = mesh.matrixWorld;
   const a = new THREE.Vector3();
   const b = new THREE.Vector3();
   const c = new THREE.Vector3();
@@ -512,7 +500,6 @@ export function dedupeSoundboardOverlay(root) {
   const ac = new THREE.Vector3();
   const n = new THREE.Vector3();
 
-  // World centroid Y and up/down facing per triangle.
   const triY = [];
   const upY = [];
   for (let t = 0; t < idx.count; t += 3) {
@@ -526,8 +513,6 @@ export function dedupeSoundboardOverlay(root) {
   }
   if (upY.length < 8) return 0;
 
-  // Two flat up-layers ⇒ a clear gap in the sorted up-face heights. Split there;
-  // if the soundboard is single-layered the largest gap is tiny and nothing drops.
   upY.sort((x, y) => x - y);
   let gap = 0;
   let cut = Infinity;
@@ -538,7 +523,7 @@ export function dedupeSoundboardOverlay(root) {
       cut = (upY[i] + upY[i - 1]) / 2;
     }
   }
-  if (gap < 0.002) return 0; // no distinct overlay layer
+  if (gap < 0.002) return 0;
 
   const keep = [];
   for (let t = 0; t < idx.count; t += 3) {
@@ -550,6 +535,33 @@ export function dedupeSoundboardOverlay(root) {
   geo.computeBoundingSphere();
   geo.computeBoundingBox();
   return idx.count / 3 - keep.length / 3;
+}
+
+/**
+ * glTF loads Piano_Static as a group of per-material meshes (Cube016_3 = plate).
+ * Soundboard wood and the cast plate can each carry a doubled up-facing shell.
+ * @param {THREE.Object3D} root
+ * @returns {number} removed triangle count
+ */
+export function dedupeInteriorOverlays(root) {
+  const ps = root.getObjectByName("Piano_Static");
+  if (!ps) return 0;
+  let removed = 0;
+  ps.traverse((o) => {
+    if (!o.isMesh) return;
+    if (
+      meshMatchesMaterial(o, SOUNDBOARD_MESH_MAT_RE) ||
+      meshMatchesMaterial(o, PLATE_MAT_RE)
+    ) {
+      removed += dedupeOverlayOnMesh(o);
+    }
+  });
+  return removed;
+}
+
+/** @deprecated use dedupeInteriorOverlays */
+export function dedupeSoundboardOverlay(root) {
+  return dedupeInteriorOverlays(root);
 }
 
 /**
@@ -576,6 +588,23 @@ function liftMeshWorldY(mesh, deltaY) {
 }
 
 const STRING_LIFT = 0.005; // world metres; clears the plate/bridge under the strings
+const BRIDGE_LIFT = 0.003;
+
+function meshWorldYExtents(mesh) {
+  const pos = mesh.geometry?.attributes?.position;
+  if (!pos) return null;
+  mesh.updateMatrixWorld(true);
+  const mw = mesh.matrixWorld;
+  const v = new THREE.Vector3();
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i).applyMatrix4(mw);
+    minY = Math.min(minY, v.y);
+    maxY = Math.max(maxY, v.y);
+  }
+  return { minY, maxY };
+}
 
 /**
  * Physically separate the speaking strings (and, in older joined GLBs, the seated
@@ -583,24 +612,32 @@ const STRING_LIFT = 0.005; // world metres; clears the plate/bridge under the st
  * logarithmicDepthBuffer rewrites fragment depth in the shader and discards the
  * rasterizer offset — so the only reliable fix is real geometric clearance.
  *
- * The current export emits the harp interior as separate single-material meshes
- * (Piano_Static is their parent group). Older GLBs joined them into one
- * multi-material mesh; both layouts are handled.
+ * glTF loads Piano_Static as a group of per-material child meshes (Cube016_N).
+ * Legacy single-mesh joins are still handled.
  * @param {THREE.Object3D} root
  */
 export function prepInteriorStack(root) {
   const ps = root.getObjectByName("Piano_Static");
   if (!ps) return;
 
-  // Split-mesh layout: lift each string mesh clear of the plate/bridge.
+  // Per-primitive child meshes (current GLB layout).
   if (!ps.isMesh) {
+    let wood = null;
+    let bridge = null;
     ps.traverse((obj) => {
       if (!obj.isMesh) return;
-      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-      if (mats.some((m) => m && STRING_MAT_RE.test(m.name || ""))) {
-        liftMeshWorldY(obj, STRING_LIFT);
-      }
+      if (meshMatchesMaterial(obj, STRING_MAT_RE)) liftMeshWorldY(obj, STRING_LIFT);
+      if (meshMatchesMaterial(obj, SOUNDBOARD_MESH_MAT_RE)) wood = obj;
+      if (meshMatchesMaterial(obj, /Bridge/i)) bridge = obj;
     });
+    if (wood && bridge) {
+      const w = meshWorldYExtents(wood);
+      const b = meshWorldYExtents(bridge);
+      if (w && b) {
+        const gap = b.minY - w.maxY;
+        if (gap < 0.001) liftMeshWorldY(bridge, BRIDGE_LIFT + Math.max(0, -gap));
+      }
+    }
     return;
   }
 
@@ -711,11 +748,11 @@ export function refineMaterials(root) {
     } else if (/gold/i.test(name)) {
       next = tuneMetal(mat, 0xd4af37, 0.24);
     } else if (/brass/i.test(name)) {
-      next = tuneMetal(mat, 0xc6a456, 0.2);
+      next = tuneMetal(mat, 0xc6a456, 0.2, { doubleSided: !/Rim|Plate/i.test(name) });
     } else if (/copper/i.test(name)) {
       next = tuneMetal(mat, 0xb87333, 0.28);
     } else if (/steel|chrome|metal/i.test(name)) {
-      next = tuneMetal(mat, 0xc6c4c0, 0.22);
+      next = tuneMetal(mat, 0xc6c4c0, 0.22, { doubleSided: !/^0A_Steel/i.test(name) });
     } else if (/wood|beech|maple/i.test(name)) {
       next = tuneWood(mat);
     } else if (/plastic/i.test(name)) {

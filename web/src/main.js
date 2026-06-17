@@ -18,7 +18,7 @@ import {
   getHeroCameraPose,
   refineMaterials,
   repairPianoStatic,
-  dedupeSoundboardOverlay,
+  dedupeInteriorOverlays,
   prepHingeTrim,
   prepInteriorStack,
   HERO_CAMERA_DEFAULTS,
@@ -695,8 +695,8 @@ async function init() {
   frameModel(model);
   const pruned = repairPianoStatic(model);
   if (pruned) console.info(`[steinway] pruned ${pruned} corrupt Piano_Static triangle(s)`);
-  const dedup = dedupeSoundboardOverlay(model);
-  if (dedup) console.info(`[steinway] dropped ${dedup} doubled soundboard triangle(s)`);
+  const dedup = dedupeInteriorOverlays(model);
+  if (dedup) console.info(`[steinway] dropped ${dedup} doubled interior triangle(s)`);
   refineMaterials(model);
   prepHingeTrim(model);
   prepInteriorStack(model);
