@@ -153,10 +153,10 @@ _LID_WOOD_OBJECTS = ("Inside_Rim_Case",)
 # materials (rim vs plate) so the viewer can depth-bias each layer.
 _BRIDGE_SEAT_MARK = "steinway_bridge_seated"
 _BRIDGE_SEAT_VERSION = 1
-_BRIDGE_MIN_CLEARANCE_M = 0.0006   # target gap after seating (meters)
+_BRIDGE_MIN_CLEARANCE_M = 0.0012   # target gap after seating (meters)
 
 _INTERIOR_TRIM_PUSH = {
-    "Soundboard": -0.0015,            # 1.5 mm inset under the seated bridge
+    "Soundboard": -0.0025,            # 2.5 mm inset under the seated bridge
     "String_Supports_01": 0.00015,
     "Brass_Sound_Works.002": 0.00045,  # capo / web plate
     "Brass_Sound_Works.001": 0.00055,  # main gold pin-field board

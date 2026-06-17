@@ -365,14 +365,20 @@ function tuneWood(mat) {
 function applyInteriorDepthBias(mat, name) {
   if (/Bridge/i.test(name) && /wood|beech|maple/i.test(name)) {
     mat.polygonOffset = true;
-    mat.polygonOffsetFactor = -4;
-    mat.polygonOffsetUnits = -4;
+    mat.polygonOffsetFactor = -6;
+    mat.polygonOffsetUnits = -6;
     return;
   }
   if (/^2B_Wood|wood|beech|maple/i.test(name) && !/^Action_/i.test(name)) {
     mat.polygonOffset = true;
-    mat.polygonOffsetFactor = 3;
-    mat.polygonOffsetUnits = 3;
+    mat.polygonOffsetFactor = 5;
+    mat.polygonOffsetUnits = 5;
+    return;
+  }
+  if (/^sy_(dark|lite)/i.test(name)) {
+    mat.polygonOffset = true;
+    mat.polygonOffsetFactor = -1;
+    mat.polygonOffsetUnits = -1;
     return;
   }
   if (/Rim/i.test(name) && /brass/i.test(name)) {
@@ -462,8 +468,90 @@ export function repairPianoStatic(root) {
   return src.count / 3 - keep.length / 3;
 }
 
-/** Kept for main.js; interior bias lives on Piano_Static material slots. */
-export function prepInteriorStack(_root) {}
+/**
+ * Physically separate the soundboard wood from the seated bridge in world Y.
+ * Polygon offset alone is not enough once frameModel scales the mesh — nudge
+ * vertices a few mm so the log-depth buffer has real clearance.
+ * @param {THREE.Object3D} root
+ */
+export function prepInteriorStack(root) {
+  const ps = root.getObjectByName("Piano_Static");
+  if (!ps?.isMesh || !ps.geometry?.index || !ps.geometry.groups?.length) return;
+
+  const geo = ps.geometry;
+  const pos = geo.attributes.position;
+  const idx = geo.index;
+  const materials = Array.isArray(ps.material) ? ps.material : [ps.material];
+
+  const matIndex = (re) => materials.findIndex((m) => m && re.test(m.name || ""));
+  const woodMi = matIndex(/^2B_Wood_Beech_mqm$/i);
+  const bridgeMi = matIndex(/Bridge/i);
+  if (woodMi < 0 || bridgeMi < 0) return;
+
+  ps.updateMatrixWorld(true);
+  const inv = ps.matrixWorld.clone().invert();
+  const v = new THREE.Vector3();
+  const centroidY = (t) => {
+    let y = 0;
+    for (let k = 0; k < 3; k++) {
+      v.fromBufferAttribute(pos, idx.getX(t + k)).applyMatrix4(ps.matrixWorld);
+      y += v.y;
+    }
+    return y / 3;
+  };
+
+  let bridgeMinY = Infinity;
+  let bridgeMaxY = -Infinity;
+  for (const g of geo.groups) {
+    if (g.materialIndex !== bridgeMi) continue;
+    for (let t = g.start; t < g.start + g.count; t += 3) {
+      const y = centroidY(t);
+      bridgeMinY = Math.min(bridgeMinY, y);
+      bridgeMaxY = Math.max(bridgeMaxY, y);
+    }
+  }
+  if (!Number.isFinite(bridgeMinY)) return;
+
+  const SINK = 0.003;
+  const LIFT = 0.003;
+  const touchBand = Math.max(0.006, (bridgeMaxY - bridgeMinY) * 0.05);
+
+  const nudgeVerts = (t, deltaY) => {
+    for (let k = 0; k < 3; k++) {
+      const vi = idx.getX(t + k);
+      v.fromBufferAttribute(pos, vi).applyMatrix4(ps.matrixWorld);
+      v.y += deltaY;
+      v.applyMatrix4(inv);
+      pos.setXYZ(vi, v.x, v.y, v.z);
+    }
+  };
+
+  let sunk = 0;
+  let lifted = 0;
+  for (const g of geo.groups) {
+    if (g.materialIndex === woodMi) {
+      for (let t = g.start; t < g.start + g.count; t += 3) {
+        const y = centroidY(t);
+        if (y >= bridgeMinY - touchBand && y <= bridgeMinY + touchBand * 0.5) {
+          nudgeVerts(t, -SINK);
+          sunk++;
+        }
+      }
+    } else if (g.materialIndex === bridgeMi) {
+      for (let t = g.start; t < g.start + g.count; t += 3) {
+        nudgeVerts(t, LIFT);
+        lifted++;
+      }
+    }
+  }
+
+  if (sunk || lifted) {
+    pos.needsUpdate = true;
+    geo.computeVertexNormals();
+    geo.computeBoundingSphere();
+    geo.computeBoundingBox();
+  }
+}
 
 /**
  * Materials from export_glb.py: sy_* base colors from the .blend, wood/metal maps
