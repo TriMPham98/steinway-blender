@@ -468,15 +468,144 @@ export function repairPianoStatic(root) {
   return src.count / 3 - keep.length / 3;
 }
 
+// The speaking strings (plain steel + bass copper) overlay the plate/soundboard
+// from above, modeled coplanar with the bridge top and inside the plate's Y span.
+const STRING_MAT_RE = /^(0C_Copper|Strings_Steel)/i;
+// 0A_Steel is hardware (pins/capo/agraffes), not speaking strings — leave it seated.
+
+const SOUNDBOARD_MESH_MAT_RE = /^2B_Wood_Beech_mqm$/i; // exact: excludes …_Bridge
+
 /**
- * Physically separate the soundboard wood from the seated bridge in world Y.
- * Polygon offset alone is not enough once frameModel scales the mesh — nudge
- * vertices a few mm so the log-depth buffer has real clearance.
+ * The exported soundboard mesh (2B_Wood_Beech_mqm) carries a *doubled* panel: the
+ * structural slab top plus a thin duplicate "overlay" lens a few mm above it.
+ * Both faces point at the camera, so wherever the two crowned surfaces cross they
+ * z-fight into a fine speckle (polygonOffset can't help under logarithmicDepthBuffer).
+ * A shift-click raycast confirms it: two Cube016_5 hits at Δ0.00 mm.
+ *
+ * Drop the upper duplicate, keeping the structural slab. The split is derived from
+ * the mesh's own up-facing geometry (two Y clusters with a clear gap) rather than a
+ * hardcoded height, so it survives reframing/rescaling. The slab fully backs the
+ * removed lens, so the visible surface is unchanged apart from the flicker clearing.
+ * @param {THREE.Object3D} root
+ * @returns {number} removed triangle count
+ */
+export function dedupeSoundboardOverlay(root) {
+  const ps = root.getObjectByName("Piano_Static");
+  if (!ps) return 0;
+  let sb = null;
+  ps.traverse((o) => {
+    if (sb || !o.isMesh) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    if (mats.some((m) => m && SOUNDBOARD_MESH_MAT_RE.test(m.name || ""))) sb = o;
+  });
+  if (!sb?.geometry?.index) return 0;
+
+  const geo = sb.geometry;
+  const pos = geo.attributes.position;
+  const idx = geo.index;
+  sb.updateMatrixWorld(true);
+  const mw = sb.matrixWorld;
+  const a = new THREE.Vector3();
+  const b = new THREE.Vector3();
+  const c = new THREE.Vector3();
+  const ab = new THREE.Vector3();
+  const ac = new THREE.Vector3();
+  const n = new THREE.Vector3();
+
+  // World centroid Y and up/down facing per triangle.
+  const triY = [];
+  const upY = [];
+  for (let t = 0; t < idx.count; t += 3) {
+    a.fromBufferAttribute(pos, idx.getX(t)).applyMatrix4(mw);
+    b.fromBufferAttribute(pos, idx.getX(t + 1)).applyMatrix4(mw);
+    c.fromBufferAttribute(pos, idx.getX(t + 2)).applyMatrix4(mw);
+    const cy = (a.y + b.y + c.y) / 3;
+    n.copy(ab.subVectors(b, a)).cross(ac.subVectors(c, a)).normalize();
+    triY.push(cy);
+    if (n.y > 0.7) upY.push(cy);
+  }
+  if (upY.length < 8) return 0;
+
+  // Two flat up-layers ⇒ a clear gap in the sorted up-face heights. Split there;
+  // if the soundboard is single-layered the largest gap is tiny and nothing drops.
+  upY.sort((x, y) => x - y);
+  let gap = 0;
+  let cut = Infinity;
+  for (let i = 1; i < upY.length; i++) {
+    const g = upY[i] - upY[i - 1];
+    if (g > gap) {
+      gap = g;
+      cut = (upY[i] + upY[i - 1]) / 2;
+    }
+  }
+  if (gap < 0.002) return 0; // no distinct overlay layer
+
+  const keep = [];
+  for (let t = 0; t < idx.count; t += 3) {
+    if (triY[t / 3] <= cut) keep.push(idx.getX(t), idx.getX(t + 1), idx.getX(t + 2));
+  }
+  if (keep.length === idx.count) return 0;
+  geo.setIndex(keep);
+  geo.computeVertexNormals();
+  geo.computeBoundingSphere();
+  geo.computeBoundingBox();
+  return idx.count / 3 - keep.length / 3;
+}
+
+/**
+ * Translate every vertex of a mesh by `deltaY` in *world* space (then back into
+ * the mesh's local frame), leaving normals untouched since it's a pure translation.
+ */
+function liftMeshWorldY(mesh, deltaY) {
+  const geo = mesh.geometry;
+  const pos = geo?.attributes?.position;
+  if (!pos) return 0;
+  mesh.updateMatrixWorld(true);
+  const inv = mesh.matrixWorld.clone().invert();
+  const v = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i++) {
+    v.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+    v.y += deltaY;
+    v.applyMatrix4(inv);
+    pos.setXYZ(i, v.x, v.y, v.z);
+  }
+  pos.needsUpdate = true;
+  geo.computeBoundingSphere();
+  geo.computeBoundingBox();
+  return pos.count;
+}
+
+const STRING_LIFT = 0.005; // world metres; clears the plate/bridge under the strings
+
+/**
+ * Physically separate the speaking strings (and, in older joined GLBs, the seated
+ * bridge) from the surface beneath them in world Y. polygonOffset can't do this —
+ * logarithmicDepthBuffer rewrites fragment depth in the shader and discards the
+ * rasterizer offset — so the only reliable fix is real geometric clearance.
+ *
+ * The current export emits the harp interior as separate single-material meshes
+ * (Piano_Static is their parent group). Older GLBs joined them into one
+ * multi-material mesh; both layouts are handled.
  * @param {THREE.Object3D} root
  */
 export function prepInteriorStack(root) {
   const ps = root.getObjectByName("Piano_Static");
-  if (!ps?.isMesh || !ps.geometry?.index || !ps.geometry.groups?.length) return;
+  if (!ps) return;
+
+  // Split-mesh layout: lift each string mesh clear of the plate/bridge.
+  if (!ps.isMesh) {
+    ps.traverse((obj) => {
+      if (!obj.isMesh) return;
+      const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+      if (mats.some((m) => m && STRING_MAT_RE.test(m.name || ""))) {
+        liftMeshWorldY(obj, STRING_LIFT);
+      }
+    });
+    return;
+  }
+
+  // Legacy joined-mesh layout (single multi-material Piano_Static).
+  if (!ps.geometry?.index || !ps.geometry.groups?.length) return;
 
   const geo = ps.geometry;
   const pos = geo.attributes.position;
@@ -486,6 +615,9 @@ export function prepInteriorStack(root) {
   const matIndex = (re) => materials.findIndex((m) => m && re.test(m.name || ""));
   const woodMi = matIndex(/^2B_Wood_Beech_mqm$/i);
   const bridgeMi = matIndex(/Bridge/i);
+  const stringMis = new Set(
+    materials.flatMap((m, i) => (m && STRING_MAT_RE.test(m.name || "") ? [i] : [])),
+  );
   if (woodMi < 0 || bridgeMi < 0) return;
 
   ps.updateMatrixWorld(true);
@@ -540,6 +672,11 @@ export function prepInteriorStack(root) {
     } else if (g.materialIndex === bridgeMi) {
       for (let t = g.start; t < g.start + g.count; t += 3) {
         nudgeVerts(t, LIFT);
+        lifted++;
+      }
+    } else if (stringMis.has(g.materialIndex)) {
+      for (let t = g.start; t < g.start + g.count; t += 3) {
+        nudgeVerts(t, STRING_LIFT);
         lifted++;
       }
     }
@@ -599,6 +736,10 @@ export function refineMaterials(root) {
     // Default to FrontSide, but keep DoubleSide where a branch asked for it
     // (thin metal trim that would otherwise be backface-culled).
     if (next.side !== THREE.DoubleSide) next.side = THREE.FrontSide;
+    // Strings are closed tubes: DoubleSide draws each tube's far wall too, so
+    // every string reads as a doubled line that z-fights/shimmers at grazing
+    // angles. Force FrontSide — the outer surface is all we ever see.
+    if (STRING_MAT_RE.test(name)) next.side = THREE.FrontSide;
     applyInteriorDepthBias(next, name);
     cache.set(mat.uuid, next);
     return next;

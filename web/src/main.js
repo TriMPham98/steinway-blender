@@ -18,6 +18,7 @@ import {
   getHeroCameraPose,
   refineMaterials,
   repairPianoStatic,
+  dedupeSoundboardOverlay,
   prepHingeTrim,
   prepInteriorStack,
   HERO_CAMERA_DEFAULTS,
@@ -692,6 +693,8 @@ async function init() {
   frameModel(model);
   const pruned = repairPianoStatic(model);
   if (pruned) console.info(`[steinway] pruned ${pruned} corrupt Piano_Static triangle(s)`);
+  const dedup = dedupeSoundboardOverlay(model);
+  if (dedup) console.info(`[steinway] dropped ${dedup} doubled soundboard triangle(s)`);
   refineMaterials(model);
   prepHingeTrim(model);
   prepInteriorStack(model);
@@ -709,6 +712,35 @@ async function init() {
   };
 
   if (import.meta.env.DEV) {
+    window.__cam = camera;
+    window.__ctrl = controls;
+    window.__model = model;
+
+    // Z-fight probe: shift-click a pixel to log every mesh under the cursor,
+    // sorted front-to-back. Two hits at near-equal distance (Δ in mm) are the
+    // coplanar pair that's flickering. Exposed as window.__probe(x,y) too so a
+    // headless driver can hit exact pixels.
+    const probeRay = new THREE.Raycaster();
+    window.__probe = (ndcX, ndcY) => {
+      probeRay.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
+      const hits = probeRay.intersectObject(model, true).filter((h) => h.object.visible);
+      const rows = hits.slice(0, 8).map((h, i) => {
+        const m = h.object.material;
+        const mat = Array.isArray(m) ? m.map((x) => x?.name).join(",") : m?.name;
+        const gap = i > 0 ? `Δ${((h.distance - hits[i - 1].distance) * 1000).toFixed(2)}mm` : "";
+        return { obj: h.object.name, mat, dist: +h.distance.toFixed(4), gap };
+      });
+      console.table(rows);
+      return rows;
+    };
+    renderer.domElement.addEventListener("pointerdown", (e) => {
+      if (!e.shiftKey) return;
+      const r = renderer.domElement.getBoundingClientRect();
+      window.__probe(
+        ((e.clientX - r.left) / r.width) * 2 - 1,
+        -((e.clientY - r.top) / r.height) * 2 + 1,
+      );
+    });
     const debugStack = document.createElement("div");
     debugStack.className = "debug-stack";
     viewport.appendChild(debugStack);
