@@ -124,9 +124,15 @@ _BENCH_LEG_NAMES = frozenset({"Bench_Leg_01", "Bench_Leg_02", "Bench_Leg_03", "B
 # Lid edge: brass/gold trim and inner wood rim are modeled flush; push trim out and
 # wood back slightly so joined GLB does not z-fight in the web viewer.
 _LID_TRIM_OUTWARD_M = 0.00025  # 0.25 mm along vertex normals
-# Continuous-hinge leaves/screw plate are ~1 mm shells; nudge further out so they
-# clear the lacquered lid in the web viewer (0.25 mm was invisible edge-on).
-_HINGE_TRIM_OUTWARD_M = 0.002  # 2 mm
+# Continuous-hinge leaves/screw plate are ~1 mm shells sitting on lacquer. Tier
+# the push so each layer clears the one below without the 2 mm lump that caused
+# web z-fight (geometry + polygonOffset + DoubleSide was overkill).
+_HINGE_TRIM_PUSH = {
+    "Long_Continuous_Hinge_Bottom": 0.0004,  # 0.4 mm off lacquer
+    "Long_Continuous_Hinge_Top": 0.0004,
+    "Long_Continuous_Hinge_Screws": 0.0006,  # screws ride above the leaves
+    "Long_Continuous_Hinge_Rod": 0.00025,     # same as other brass trim
+}
 _LID_WOOD_INWARD_M = 0.00015  # 0.15 mm
 _LID_TRIM_OBJECTS = (
     "Brass_Sound_Works.001",
@@ -323,8 +329,7 @@ def _fix_lid_trim_zfight():
         obj = bpy.data.objects.get(name)
         if obj is None:
             continue
-        dist = (_HINGE_TRIM_OUTWARD_M if name in _HINGE_TRIM_OBJECTS
-                else _LID_TRIM_OUTWARD_M)
+        dist = _HINGE_TRIM_PUSH.get(name, _LID_TRIM_OUTWARD_M)
         if _push_mesh_along_normals(obj, dist):
             moved.append(name)
     for name in _LID_WOOD_OBJECTS:

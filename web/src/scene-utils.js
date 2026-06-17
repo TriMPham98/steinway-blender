@@ -280,24 +280,29 @@ function lacquerFromExport(mat, { matte, lite }) {
   });
 }
 
-const HINGE_TRIM_NAMES = new Set([
+const HINGE_LEAF_NAMES = new Set([
   "Long_Continuous_Hinge_Top",
   "Long_Continuous_Hinge_Bottom",
-  "Long_Continuous_Hinge_Rod",
   "Long_Continuous_Hinge_Screws",
 ]);
 
-/** Nudge lid-spine hinge trim forward so thin gold leaves beat lacquer z-fight. */
+/**
+ * Thin hinge leaves/screw plate: export pushes them off the lacquer just enough
+ * to see. Render front faces only — DoubleSide on ~1 mm shells drew both sides at
+ * the same depth and flickered against the lid (and each other).
+ */
 export function prepHingeTrim(root) {
   root.traverse((obj) => {
-    if (!obj.isMesh || !HINGE_TRIM_NAMES.has(obj.name)) return;
-    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-    for (const mat of mats) {
-      if (!mat) continue;
-      mat.polygonOffset = true;
-      mat.polygonOffsetFactor = -2;
-      mat.polygonOffsetUnits = -2;
-    }
+    if (!obj.isMesh || !HINGE_LEAF_NAMES.has(obj.name)) return;
+    const cloneMat = (mat) => {
+      if (!mat) return mat;
+      const next = mat.clone();
+      next.side = THREE.FrontSide;
+      return next;
+    };
+    obj.material = Array.isArray(obj.material)
+      ? obj.material.map(cloneMat)
+      : cloneMat(obj.material);
   });
 }
 
