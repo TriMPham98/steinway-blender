@@ -298,6 +298,12 @@ export function prepHingeTrim(root) {
       if (!mat) return mat;
       const next = mat.clone();
       next.side = THREE.FrontSide;
+      // Mild depth bias on the cloned leaf materials only — geometry is already
+      // tiered at export; this mops up residual lacquer flicker without the
+      // heavy -2 bias that punched gold through the case.
+      next.polygonOffset = true;
+      next.polygonOffsetFactor = -1;
+      next.polygonOffsetUnits = -1;
       return next;
     };
     obj.material = Array.isArray(obj.material)

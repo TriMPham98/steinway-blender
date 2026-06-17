@@ -128,10 +128,10 @@ _LID_TRIM_OUTWARD_M = 0.00025  # 0.25 mm along vertex normals
 # the push so each layer clears the one below without the 2 mm lump that caused
 # web z-fight (geometry + polygonOffset + DoubleSide was overkill).
 _HINGE_TRIM_PUSH = {
-    "Long_Continuous_Hinge_Bottom": 0.0004,  # 0.4 mm off lacquer
-    "Long_Continuous_Hinge_Top": 0.0004,
-    "Long_Continuous_Hinge_Screws": 0.0006,  # screws ride above the leaves
-    "Long_Continuous_Hinge_Rod": 0.00025,     # same as other brass trim
+    "Long_Continuous_Hinge_Bottom": 0.0006,  # 0.6 mm off lacquer
+    "Long_Continuous_Hinge_Top": 0.0006,
+    "Long_Continuous_Hinge_Screws": 0.00085,  # screws ride above the leaves
+    "Long_Continuous_Hinge_Rod": 0.0004,
 }
 _LID_WOOD_INWARD_M = 0.00015  # 0.15 mm
 _LID_TRIM_OBJECTS = (
