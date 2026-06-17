@@ -920,6 +920,14 @@ def _build_dampers(plan, coll, mats):
                             for p in obj.data.polygons)
     plate_bvh = BVHTree.FromPolygons(*plate_geo) if plate_geo[0] else None
 
+    WIRE_R = 0.0009
+    WIRE_ELBOW_Z = 0.875
+    WIRE_ELBOW_Z_MAX = 0.923
+    WIRE_ELBOW_STEP = 0.002
+    WIRE_STUB_DROP = 0.040
+    WIRE_STUB_MAX = 0.060
+    WIRE_X_JOGS = (0.003, -0.003, 0.006, -0.006)
+
     def head_blocked(cx, y, hb, half_d):
         """Probe rays whose plate hit passes THROUGH the head's z-range.
 
@@ -948,6 +956,70 @@ def _build_dampers(plan, coll, mats):
                     dist += (hit[0].z - origin.z) + 0.0005
                     origin = Vector((cx + dx, y + dy, hit[0].z + 0.0005))
         return blocked
+
+    def _wire_segments(cx, y, hb, x, fit, linked, elbow_z, wire_x=0.0,
+                       stub_drop=WIRE_STUB_DROP):
+        """Brass wire polyline; optional lateral jog at the elbow only."""
+        if linked:
+            elbow = Vector((cx, y, elbow_z))
+            crank_from = elbow
+            segs = ((Vector((cx, y, hb)), elbow),)
+            if wire_x:
+                crank_from = Vector((cx + wire_x, y, elbow_z))
+                segs += ((elbow, crank_from),)
+            segs += (
+                (crank_from, Vector((x, fit + WIRE_DY, 0.832))),
+                (Vector((x, fit + WIRE_DY, 0.832)),
+                 Vector((x, fit + WIRE_DY, 0.746))),
+            )
+            return segs
+        return ((Vector((cx, y, hb)), Vector((cx, y, hb - stub_drop))),)
+
+    def wire_path_blocked(cx, y, hb, x, fit, linked, elbow_z=WIRE_ELBOW_Z,
+                          wire_x=0.0, stub_drop=WIRE_STUB_DROP):
+        """Probe every brass bar segment (vertical, jog, crank, drop)."""
+        if plate_bvh is None:
+            return 0
+        down = Vector((0.0, 0.0, -1.0))
+        blocked = 0
+        for p0, p1 in _wire_segments(cx, y, hb, x, fit, linked, elbow_z,
+                                      wire_x, stub_drop):
+            for i in range(17):
+                p = p0.lerp(p1, i / 16.0)
+                hit = plate_bvh.ray_cast(p + Vector((0.0, 0.0, 0.001)), down, 0.06)
+                if hit[0] is not None and p.z - hit[0].z - WIRE_R < 0.0005:
+                    blocked += 1
+        return blocked
+
+    def _fit_wire_route(cx, y, hb, x, fit, linked):
+        """Raise the elbow (or stub drop) until the wire clears the plate web.
+
+        Heads stay on the fitted action line; only the wire route adjusts.
+        """
+        if plate_bvh is None:
+            return WIRE_ELBOW_Z, 0.0, WIRE_STUB_DROP
+        if linked:
+            z = WIRE_ELBOW_Z
+            while z <= WIRE_ELBOW_Z_MAX + 1e-9:
+                if wire_path_blocked(cx, y, hb, x, fit, linked,
+                                     elbow_z=z) == 0:
+                    return z, 0.0, WIRE_STUB_DROP
+                z += WIRE_ELBOW_STEP
+            for wx in WIRE_X_JOGS:
+                z = WIRE_ELBOW_Z
+                while z <= WIRE_ELBOW_Z_MAX + 1e-9:
+                    if wire_path_blocked(cx, y, hb, x, fit, linked,
+                                         elbow_z=z, wire_x=wx) == 0:
+                        return z, wx, WIRE_STUB_DROP
+                    z += WIRE_ELBOW_STEP
+            return WIRE_ELBOW_Z_MAX, 0.0, WIRE_STUB_DROP
+        drop = WIRE_STUB_DROP
+        while drop <= WIRE_STUB_MAX + 1e-9:
+            if wire_path_blocked(cx, y, hb, x, fit, linked,
+                                 stub_drop=drop) == 0:
+                return WIRE_ELBOW_Z, 0.0, drop
+            drop += 0.005
+        return WIRE_ELBOW_Z, 0.0, WIRE_STUB_MAX
 
     # Snapshot the imported decorative units, then retire the joined meshes.
     # Each action damper clones the nearest decorative shape but is seated on
@@ -996,29 +1068,20 @@ def _build_dampers(plan, coll, mats):
         # the row converges with the bays' rear border bar.
         depth = 0.045 - 0.017 * (note - 21) / (DAMPER_TOP - 21)
         half_d = depth / 2.0
+        # Heads ride the fitted action line — even row, no per-note y shuffle.
         y_h = s + HEAD_DY
         cx, hb = at_y(y_h)
-        # Slide along the course where a plate bar crosses the damper row:
-        # smallest offset that fully clears wins; otherwise least-blocked.
-        # Never slide so far forward that the head meets the hammer at strike.
-        y_floor = s + 0.009 + half_d
-        residual = head_blocked(cx, y_h, hb, half_d)
-        if residual:
-            best = (residual, 0.0, cx, hb)
-            for step in range(1, 12):
-                for dy in (0.004 * step, -0.004 * step):
-                    if y_h + dy < y_floor:
-                        continue
-                    cx2, hb2 = at_y(y_h + dy)
-                    n_blk = head_blocked(cx2, y_h + dy, hb2, half_d)
-                    if n_blk < best[0]:
-                        best = (n_blk, dy, cx2, hb2)
-                if best[0] == 0:
-                    break
-            residual, y_h, cx, hb = best[0], y_h + best[1], best[2], best[3]
-            if residual:
-                clipped.append((note, residual))
         linked = note <= DAMPER_LINK_TOP
+
+        head_res = head_blocked(cx, y_h, hb, half_d)
+        if head_res:
+            clipped.append((note, ("head", head_res)))
+
+        elbow_z, wire_x, stub_drop = _fit_wire_route(cx, y_h, hb, x, fit, linked)
+        wire_res = wire_path_blocked(cx, y_h, hb, x, fit, linked,
+                                     elbow_z, wire_x, stub_drop)
+        if wire_res:
+            clipped.append((note, ("wire", wire_res)))
 
         dbuf = _Buf()
         if deco_templates:
@@ -1028,11 +1091,17 @@ def _build_dampers(plan, coll, mats):
         else:
             _damper_head_buf(dbuf, cx, y_h - half_d, y_h + half_d, hb)
         if linked:
-            dbuf.bar((cx, y_h, hb), (cx, y_h, 0.875), 0.0009, 2)
-            dbuf.bar((cx, y_h, 0.875), (x, fit + WIRE_DY, 0.832), 0.0009, 2)
-            dbuf.bar((x, fit + WIRE_DY, 0.832), (x, fit + WIRE_DY, 0.746), 0.0009, 2)
+            elbow = (cx, y_h, elbow_z)
+            crank_from = elbow
+            dbuf.bar((cx, y_h, hb), elbow, 0.0009, 2)
+            if wire_x:
+                crank_from = (cx + wire_x, y_h, elbow_z)
+                dbuf.bar(elbow, crank_from, 0.0009, 2)
+            dbuf.bar(crank_from, (x, fit + WIRE_DY, 0.832), 0.0009, 2)
+            dbuf.bar((x, fit + WIRE_DY, 0.832), (x, fit + WIRE_DY, 0.746),
+                     0.0009, 2)
         else:
-            dbuf.bar((cx, y_h, hb), (cx, y_h, hb - 0.040), 0.0009, 2)
+            dbuf.bar((cx, y_h, hb), (cx, y_h, hb - stub_drop), 0.0009, 2)
         dob = dbuf.to_object(f"Damper.{note:03d}", (cx, y_h, 0.0), coll, dmats)
         A = n["psi"] * (fit + DCONTACT_DY - n["hinge_y"])
         _tag(dob, "damper_head", note, lift_a=A)
