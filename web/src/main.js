@@ -696,7 +696,7 @@ async function init() {
   const pruned = repairPianoStatic(model);
   if (pruned) console.info(`[steinway] pruned ${pruned} corrupt Piano_Static triangle(s)`);
   const dedup = dedupeInteriorOverlays(model);
-  if (dedup) console.info(`[steinway] dropped ${dedup} doubled interior triangle(s)`);
+  if (dedup) console.info(`[steinway] dropped ${dedup} doubled plate overlay triangle(s)`);
   refineMaterials(model);
   prepHingeTrim(model);
   prepInteriorStack(model);
