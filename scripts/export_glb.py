@@ -149,18 +149,8 @@ _HINGE_TRIM_OBJECTS = frozenset({
 })
 _LID_WOOD_OBJECTS = ("Inside_Rim_Case",)
 
-# Harp interior: keep out of Piano_Static (separate glTF nodes) and tier normal
-# push so wood / brass plate / strings / pins do not z-fight once joined.
-_INTERIOR_SEPARATE = frozenset({
-    "Soundboard",
-    "String_Supports_01",
-    "String_Supports_02",
-    "Brass_Sound_Works.001",
-    "Brass_Sound_Works.002",
-    "Strings_Full",
-    "Tuning_Pins",
-    "Hitch_Pins",
-})
+# Harp interior: stays in Piano_Static; tier normal push + distinct brass
+# materials (rim vs plate) so the viewer can depth-bias each layer.
 _INTERIOR_TRIM_PUSH = {
     "Soundboard": -0.0005,            # 0.5 mm into the wood
     "String_Supports_02": -0.00035,   # bridge wood under the plate
@@ -210,10 +200,6 @@ _CASE_FALL_CLOSED = 1.48
 
 def _is_case_moving(obj):
     return obj.name in _CASE_MOVING
-
-
-def _is_interior_separate(obj):
-    return obj.name in _INTERIOR_SEPARATE
 
 
 def _is_bench_leg(obj):
@@ -385,6 +371,47 @@ def _avg_world_normal(obj):
     return acc.normalized() if acc.length else Vector((0.0, 1.0, 0.0))
 
 
+def _material_slot_copy(obj, slot, suffix):
+    """Give one mesh its own material copy (joined static can bias each slot)."""
+    import bpy
+
+    if obj is None or obj.type != "MESH" or slot >= len(obj.material_slots):
+        return None
+    src = obj.material_slots[slot].material
+    if src is None:
+        return None
+    name = f"{src.name}_{suffix}"
+    dup = bpy.data.materials.get(name)
+    if dup is None:
+        dup = src.copy()
+        dup.name = name
+    obj.material_slots[slot].material = dup
+    return name
+
+
+def _split_interior_materials():
+    """Rim brass vs plate brass share one shader in the .blend — split for depth bias."""
+    import bpy
+
+    tagged = []
+    pairs = (
+        ("Brass_Sound_Works.001", "Rim"),
+        ("Brass_Sound_Works.002", "Plate"),
+        ("Soundboard", "Soundboard"),
+        ("String_Supports_02", "Bridge"),
+    )
+    for obj_name, suffix in pairs:
+        obj = bpy.data.objects.get(obj_name)
+        if obj is None:
+            continue
+        name = _material_slot_copy(obj, 0, suffix)
+        if name:
+            tagged.append(f"{obj_name}->{name}")
+    if tagged:
+        print(f"[export] interior material split: {', '.join(tagged)}")
+    return tagged
+
+
 def _fix_interior_zfight():
     """Tier soundboard / plate / strings before they are joined into Piano_Static."""
     import bpy
@@ -440,8 +467,6 @@ def _join_static():
         if _is_key(obj) or _is_pedal(obj) or _is_bench(obj) or _is_bench_leg(obj):
             continue
         if _is_case_moving(obj):
-            continue
-        if _is_interior_separate(obj):
             continue
         if _is_action(obj):     # moving parts (with --with-action) stay separate
             continue
@@ -709,6 +734,7 @@ def main():
     _apply_mesh_scales(_CASE_MOVING)
     _fix_lid_trim_zfight()
     _split_hinge_leaves()
+    _split_interior_materials()
     _fix_interior_zfight()
     case_tagged = _tag_case_parts()
     if case_tagged:
