@@ -27,7 +27,10 @@ const LID_ANIM_DURATION = 2.3;
 const LID_OVEREXTEND = 0.12; // rad the lid rises above its open rest pose
 const LIFT_T = 0.86; // lidOpen in [LIFT_T,1]: lid lifting off the prop
 const FOLD_T = 0.4; // lidOpen in [FOLD_T,LIFT_T]: prop folds; below: lid descends
-const LID_SEAT_DROP = 0.013; // metres the lid lowers onto the rim once shut
+// The measured lid tilt lands the closed lid ~1cm proud and slightly bent-side
+// high. A touch more rotation levels it on the rim, then a small drop seats it.
+const LID_CLOSE_EXTRA = 0.008; // extra close rotation (rad) to land the lid level
+const LID_SEAT_DROP = 0.009; // metres the lid lowers onto the rim once shut
 
 function lerp(a, b, u) {
   return a + (b - a) * u;
@@ -51,7 +54,7 @@ function easeInOut(u) {
 function lidCloseOffset(t, lidTilt) {
   if (t >= LIFT_T) return -LID_OVEREXTEND * smoothstep((1 - t) / (1 - LIFT_T));
   if (t >= FOLD_T) return -LID_OVEREXTEND;
-  return lerp(-LID_OVEREXTEND, lidTilt, smoothstep((FOLD_T - t) / FOLD_T));
+  return lerp(-LID_OVEREXTEND, lidTilt + LID_CLOSE_EXTRA, smoothstep((FOLD_T - t) / FOLD_T));
 }
 
 // Prop fold: 0 = upright, 1 = flat. Only folds once the lid has lifted clear.
