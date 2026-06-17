@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { PianoController } from "./piano.js";
-import { buildCaseRig, createCaseState, stepCase } from "./case.js";
+import { buildCaseRig, createCaseState, pickLidHit, stepCase } from "./case.js";
 import { LiveSession } from "./live.js";
 import { PianoAudio } from "./audio.js";
 import { MIDI_HIGH, MIDI_LOW } from "./anim.js";
@@ -118,6 +118,7 @@ const pointerNotes = new Set();
 const POINTER_DRAG_PX = 5;
 let pointerDownXY = null;
 let pointerDragged = false;
+let pendingLidClick = false;
 let pendingPointerNote = null;
 // Sampled-grand sound engine for the no-MIDI play path (silent during live
 // MIDI, where the hardware piano makes its own sound).
@@ -430,13 +431,54 @@ function syncLidToggleLabel() {
   ui.lidToggle.setAttribute("aria-pressed", open ? "true" : "false");
 }
 
+function toggleLid() {
+  if (!caseState) return;
+  const open = caseState.target.lidOpen > 0.5;
+  caseState.target.lidOpen = open ? 0 : 1;
+  syncLidToggleLabel();
+}
+
 function bindCaseControls() {
-  ui.lidToggle?.addEventListener("click", () => {
-    if (!caseState) return;
-    const open = caseState.target.lidOpen > 0.5;
-    caseState.target.lidOpen = open ? 0 : 1;
-    syncLidToggleLabel();
-  });
+  ui.lidToggle?.addEventListener("click", toggleLid);
+}
+
+function setRaycasterFromClient(clientX, clientY) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+}
+
+function pickKeyHit() {
+  if (!piano || live?.isRunning) return null;
+  const meshes = [];
+  for (const obj of piano.noteMap.values()) {
+    obj.traverse((child) => {
+      if (child.isMesh) meshes.push(child);
+    });
+  }
+  const hits = raycaster.intersectObjects(meshes, false);
+  if (!hits.length) return null;
+  const note = piano.pick(raycaster);
+  return note != null ? { note, distance: hits[0].distance } : null;
+}
+
+/** Closest interactive target under the pointer (lid beats keys at equal depth). */
+function pickPointerTarget(clientX, clientY) {
+  setRaycasterFromClient(clientX, clientY);
+  const lidHit = pickLidHit(caseRig, raycaster);
+  const keyHit = pickKeyHit();
+  if (lidHit && (!keyHit || lidHit.distance <= keyHit.distance)) {
+    return { type: "lid" };
+  }
+  if (keyHit) return { type: "key", note: keyHit.note };
+  return null;
+}
+
+function updateHoverCursor(clientX, clientY) {
+  if (pointerDownXY != null) return;
+  const target = pickPointerTarget(clientX, clientY);
+  renderer.domElement.style.cursor = target?.type === "lid" ? "pointer" : "";
 }
 
 async function loadManifest() {
@@ -572,35 +614,37 @@ function releaseAllLocalNotes() {
   }
 }
 
-function pickKeyAtClient(clientX, clientY) {
-  if (!piano || live?.isRunning) return null;
-  const rect = renderer.domElement.getBoundingClientRect();
-  pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
-  pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
-  raycaster.setFromCamera(pointer, camera);
-  return piano.pick(raycaster);
-}
-
 function onPointerDownCapture(event) {
   if (event.button !== 0) return;
   cancelCameraTween();
   pointerDownXY = [event.clientX, event.clientY];
   pointerDragged = false;
-  pendingPointerNote = pickKeyAtClient(event.clientX, event.clientY);
-  // Play on press; if the user drags to orbit, onPointerMove releases the note.
-  if (pendingPointerNote != null) {
+  pendingLidClick = false;
+  pendingPointerNote = null;
+
+  const target = pickPointerTarget(event.clientX, event.clientY);
+  if (target?.type === "lid") {
+    pendingLidClick = true;
+    return;
+  }
+  if (target?.type === "key") {
+    pendingPointerNote = target.note;
+    // Play on press; if the user drags to orbit, onPointerMove releases the note.
     localNoteOn(pendingPointerNote, 100);
     pointerNotes.add(pendingPointerNote);
   }
 }
 
 function onPointerMove(event) {
+  updateHoverCursor(event.clientX, event.clientY);
   if (pointerDownXY == null || pointerDragged) return;
   const dx = event.clientX - pointerDownXY[0];
   const dy = event.clientY - pointerDownXY[1];
   if (dx * dx + dy * dy <= POINTER_DRAG_PX * POINTER_DRAG_PX) return;
   pointerDragged = true;
   pendingPointerNote = null;
+  pendingLidClick = false;
+  renderer.domElement.style.cursor = "";
   if (pointerNotes.size) {
     for (const note of pointerNotes) localNoteOff(note);
     pointerNotes.clear();
@@ -608,6 +652,9 @@ function onPointerMove(event) {
 }
 
 function onPointerUp(event) {
+  if (!pointerDragged && pendingLidClick) {
+    toggleLid();
+  }
   if (pointerNotes.size) {
     for (const note of pointerNotes) localNoteOff(note);
     pointerNotes.clear();
@@ -615,6 +662,8 @@ function onPointerUp(event) {
   pointerDownXY = null;
   pointerDragged = false;
   pendingPointerNote = null;
+  pendingLidClick = false;
+  updateHoverCursor(event.clientX, event.clientY);
 }
 
 async function init() {
@@ -844,6 +893,9 @@ renderer.domElement.addEventListener("pointerdown", onPointerDownCapture, {
   capture: true,
 });
 renderer.domElement.addEventListener("pointermove", onPointerMove);
+renderer.domElement.addEventListener("pointerleave", () => {
+  renderer.domElement.style.cursor = "";
+});
 window.addEventListener("pointerup", onPointerUp);
 window.addEventListener("pointercancel", onPointerUp);
 

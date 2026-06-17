@@ -112,6 +112,13 @@ export function buildCaseRig(root, manifestCase) {
     }
   }
 
+  const lidPickMeshes = [];
+  if (lidBig) {
+    lidBig.traverse((child) => {
+      if (child.isMesh) lidPickMeshes.push(child);
+    });
+  }
+
   const rest = {
     lidBigZ: lidBig?.rotation.z ?? 0,
     lidBigY: lidBig?.position.y ?? 0,
@@ -124,6 +131,7 @@ export function buildCaseRig(root, manifestCase) {
     hasLid: !!lidBig,
     hasLidProp: lidPropParts.length > 0,
     hasFold: !!foldHinge,
+    lidPickMeshes,
     /**
      * @param {{ lidOpen?: number }} pose
      *   lidOpen: 1 = open (as modeled), 0 = closed
@@ -194,4 +202,15 @@ export function stepCase(state, rig, dt) {
   }
   rig.apply(state.current);
   return animating;
+}
+
+/**
+ * @param {ReturnType<typeof buildCaseRig>} rig
+ * @param {THREE.Raycaster} raycaster
+ * @returns {THREE.Intersection | null}
+ */
+export function pickLidHit(rig, raycaster) {
+  if (!rig?.lidPickMeshes?.length) return null;
+  const hits = raycaster.intersectObjects(rig.lidPickMeshes, false);
+  return hits[0] ?? null;
 }
