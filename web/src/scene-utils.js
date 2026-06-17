@@ -357,6 +357,9 @@ function tuneWood(mat) {
   mat.envMapIntensity = 1.1;
   if (mat.normalMap) mat.normalScale.set(1.15, 1.15);
   if (!mat.map) mat.color = new THREE.Color(0x7c5a3a);
+  // Solid interior wood (soundboard slab) — glTF often marks DoubleSide; that
+  // draws front/back at the same depth and z-fights (Cube016_5 probe).
+  mat.side = THREE.FrontSide;
   return mat;
 }
 
@@ -550,8 +553,8 @@ function dedupeOverlayOnMesh(mesh) {
 
 /**
  * glTF loads Piano_Static as per-material child meshes. Only the cast plate may
- * carry a thin duplicate skin; soundboard crown steps are real geometry — do not
- * dedupe the wood mesh (a max-gap cut removed the whole crowned top).
+ * carry a thin duplicate skin. Soundboard flicker was DoubleSide back-faces, not
+ * a carvable overlay (max-gap dedupe removed the crowned top).
  * @param {THREE.Object3D} root
  * @returns {number} removed triangle count
  */
