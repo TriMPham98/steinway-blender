@@ -397,10 +397,11 @@ def _split_interior_materials():
     import bpy
 
     tagged = []
+    # Soundboard stays on 2B_Wood_Beech_mqm — a dedicated _Soundboard material
+    # trips a Blender 5.x glTF bug (garbage vertex + degenerate tri in the GLB).
     pairs = (
         ("Brass_Sound_Works.001", "Rim"),
         ("Brass_Sound_Works.002", "Plate"),
-        ("Soundboard", "Soundboard"),
         ("String_Supports_02", "Bridge"),
     )
     for obj_name, suffix in pairs:

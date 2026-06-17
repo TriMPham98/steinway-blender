@@ -17,6 +17,7 @@ import {
   frameModel,
   getHeroCameraPose,
   refineMaterials,
+  repairPianoStatic,
   prepHingeTrim,
   prepInteriorStack,
   HERO_CAMERA_DEFAULTS,
@@ -689,6 +690,8 @@ async function init() {
   stripStrayCurves(model);
   scene.add(model);
   frameModel(model);
+  const pruned = repairPianoStatic(model);
+  if (pruned) console.info(`[steinway] pruned ${pruned} corrupt Piano_Static triangle(s)`);
   refineMaterials(model);
   prepHingeTrim(model);
   prepInteriorStack(model);

@@ -363,16 +363,16 @@ function tuneWood(mat) {
 
 /** Depth stack for the joined harp interior (Piano_Static material groups). */
 function applyInteriorDepthBias(mat, name) {
-  if (/Soundboard|Bridge/i.test(name) && /wood|beech|maple/i.test(name)) {
+  if (/Bridge/i.test(name) && /wood|beech|maple/i.test(name)) {
     mat.polygonOffset = true;
-    mat.polygonOffsetFactor = 4;
-    mat.polygonOffsetUnits = 4;
+    mat.polygonOffsetFactor = -4;
+    mat.polygonOffsetUnits = -4;
     return;
   }
   if (/^2B_Wood|wood|beech|maple/i.test(name) && !/^Action_/i.test(name)) {
     mat.polygonOffset = true;
-    mat.polygonOffsetFactor = 2;
-    mat.polygonOffsetUnits = 2;
+    mat.polygonOffsetFactor = 3;
+    mat.polygonOffsetUnits = 3;
     return;
   }
   if (/Rim/i.test(name) && /brass/i.test(name)) {
@@ -412,7 +412,57 @@ function applyInteriorDepthBias(mat, name) {
   }
 }
 
-/** Kept for main.js; interior bias now lives on Piano_Static material slots. */
+const PIANO_WORLD_MAX = 2.5;
+
+/**
+ * Blender 5.x glTF export can emit a stray degenerate triangle (e.g. x≈215 m on
+ * the soundboard material) when interior materials are split. Drop any face that
+ * references out-of-range or non-finite world coordinates.
+ * @param {THREE.Object3D} root
+ * @returns {number} removed triangle count
+ */
+export function repairPianoStatic(root) {
+  const ps = root.getObjectByName("Piano_Static");
+  if (!ps?.isMesh || !ps.geometry?.index) return 0;
+
+  const geo = ps.geometry;
+  const pos = geo.attributes.position;
+  const src = geo.index;
+  const keep = [];
+  const va = new THREE.Vector3();
+  const vb = new THREE.Vector3();
+  const vc = new THREE.Vector3();
+  ps.updateMatrixWorld(true);
+  const mw = ps.matrixWorld;
+
+  const ok = (p) =>
+    Number.isFinite(p.x) &&
+    Number.isFinite(p.y) &&
+    Number.isFinite(p.z) &&
+    Math.abs(p.x) < PIANO_WORLD_MAX &&
+    Math.abs(p.y) < PIANO_WORLD_MAX &&
+    Math.abs(p.z) < PIANO_WORLD_MAX;
+
+  for (let i = 0; i < src.count; i += 3) {
+    const ia = src.getX(i);
+    const ib = src.getX(i + 1);
+    const ic = src.getX(i + 2);
+    if (ia === ib || ib === ic || ia === ic) continue;
+
+    va.fromBufferAttribute(pos, ia).applyMatrix4(mw);
+    vb.fromBufferAttribute(pos, ib).applyMatrix4(mw);
+    vc.fromBufferAttribute(pos, ic).applyMatrix4(mw);
+    if (ok(va) && ok(vb) && ok(vc)) keep.push(ia, ib, ic);
+  }
+
+  if (keep.length === src.count) return 0;
+  geo.setIndex(keep);
+  geo.computeBoundingSphere();
+  geo.computeBoundingBox();
+  return src.count / 3 - keep.length / 3;
+}
+
+/** Kept for main.js; interior bias lives on Piano_Static material slots. */
 export function prepInteriorStack(_root) {}
 
 /**
