@@ -263,10 +263,11 @@ function lacquerFromExport(mat, { matte, lite }) {
       ? 0.12
       : 0.06;
   return new THREE.MeshPhysicalMaterial({
-    // Blender base is pure black; lift it a hair so unreflected areas read as
-    // deep charcoal (mimics Blender's view-transform black lift) instead of an
-    // ACES-crushed void that flattens the piano into a silhouette.
-    color: new THREE.Color(lite ? 0xcfc8b8 : shiny ? 0x12141a : 0x0a0a0a),
+    // Blender's sy_dark lacquer is pure black; lift it a hair to a *neutral*
+    // charcoal (equal RGB) so unreflected areas read as deep gray under tone
+    // mapping instead of an ACES-crushed void — but with no blue bias, so the
+    // body matches the neutral black of the Blender render.
+    color: new THREE.Color(lite ? 0xcfc8b8 : shiny ? 0x121212 : 0x0a0a0a),
     roughness,
     metalness: 0,
     clearcoat: matte ? (lite ? 0 : 0.12) : lite ? 0.35 : 1.0,
@@ -274,7 +275,8 @@ function lacquerFromExport(mat, { matte, lite }) {
     // Glossy lacquer has almost no diffuse color — it reads through IBL highlights.
     envMapIntensity: lite ? 0.75 : matte ? 0.95 : 1.75,
     specularIntensity: lite ? 0.7 : shiny ? 0.88 : 0.62,
-    specularColor: new THREE.Color(lite ? 0xffffff : 0xd8dce8),
+    // Neutral spec tint (was cool 0xd8dce8, which blued the lacquer highlights).
+    specularColor: new THREE.Color(lite ? 0xffffff : 0xece8e0),
   });
 }
 
@@ -352,7 +354,7 @@ export function refineMaterials(root) {
     } else if (/copper/i.test(name)) {
       next = tuneMetal(mat, 0xb87333, 0.28);
     } else if (/steel|chrome|metal/i.test(name)) {
-      next = tuneMetal(mat, 0xc2c6cd, 0.22);
+      next = tuneMetal(mat, 0xc6c4c0, 0.22);
     } else if (/wood|beech|maple/i.test(name)) {
       next = tuneWood(mat);
     } else if (/plastic/i.test(name)) {
@@ -360,12 +362,12 @@ export function refineMaterials(root) {
       mat.metalness = 0;
       mat.roughness = mat.roughness ?? 0.5;
       mat.envMapIntensity = 0.75;
-      if (!mat.map) mat.color = new THREE.Color(0x141416);
+      if (!mat.map) mat.color = new THREE.Color(0x141414);
       else mat.color.setRGB(1, 1, 1);
       next = mat;
     } else {
       prepMaps(mat);
-      if (!mat.map) mat.color = new THREE.Color(0x2a2a2e);
+      if (!mat.map) mat.color = new THREE.Color(0x2a2a2a);
       mat.envMapIntensity = 1.0;
       next = mat;
     }
@@ -408,12 +410,16 @@ function radialBackground(center, mid, edge) {
 /** Bright room probe for lacquer / wood reflections. */
 function roomEnvironment(pmrem) {
   const envScene = new THREE.Scene();
-  envScene.background = new THREE.Color(0x2a3040);
-  envScene.add(new THREE.AmbientLight(0xe8ecf4, 1.1));
-  const window = new THREE.DirectionalLight(0xfff8f0, 1.6);
+  // Neutral-gray probe matching Blender's neutral world (sRGB ~64). The glossy
+  // black lacquer is effectively a mirror, so a blue probe (was 0x2a3040 bg,
+  // cool fill 0xc0c8d8) tinted the whole body blue. Keep it neutral/warm so the
+  // body reads as the neutral black of the Blender render.
+  envScene.background = new THREE.Color(0x3a3a3a);
+  envScene.add(new THREE.AmbientLight(0xefece6, 1.1));
+  const window = new THREE.DirectionalLight(0xfff6ec, 1.6);
   window.position.set(1, 3, 4);
   envScene.add(window);
-  const fill = new THREE.DirectionalLight(0xc0c8d8, 0.75);
+  const fill = new THREE.DirectionalLight(0xd2cec6, 0.75);
   fill.position.set(-2, 2, -1);
   envScene.add(fill);
 
@@ -471,10 +477,13 @@ export function setupEnvironment(renderer, scene) {
 export function setupSeatedViewerLights(scene) {
   const d = LIGHTING_DEFAULTS;
 
-  const ambient = new THREE.AmbientLight(0xf2f4fa, d.ambientIntensity);
+  // Neutral fill (was cool 0xf2f4fa / hemi ground 0x9098a8 / room 0xe8ecf8) so
+  // diffuse parts and the matte body don't pick up a blue tint — Blender's world
+  // and lamps are neutral. Warm key/viewer lights are kept warm.
+  const ambient = new THREE.AmbientLight(0xf4f2ee, d.ambientIntensity);
   scene.add(ambient);
 
-  const hemi = new THREE.HemisphereLight(0xf8fafc, 0x9098a8, d.hemiIntensity);
+  const hemi = new THREE.HemisphereLight(0xfaf8f4, 0x9a988f, d.hemiIntensity);
   hemi.position.set(...d.hemiPosition);
   scene.add(hemi);
 
@@ -482,7 +491,7 @@ export function setupSeatedViewerLights(scene) {
   ceiling.position.set(...d.ceilingPosition);
   scene.add(ceiling);
 
-  const room = new THREE.DirectionalLight(0xe8ecf8, d.roomIntensity);
+  const room = new THREE.DirectionalLight(0xefece6, d.roomIntensity);
   room.position.set(...d.roomPosition);
   scene.add(room);
 
