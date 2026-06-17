@@ -596,6 +596,31 @@ function liftMeshWorldY(mesh, deltaY) {
 
 const STRING_LIFT = 0.005; // world metres; clears the plate/bridge under the strings
 const BRIDGE_LIFT = 0.003;
+const ACTION_STRING_LIFT_PARTS = new Set(["damper_head", "damper_tray"]);
+
+function actionExtras(obj) {
+  return obj.userData?.extras ?? obj.userData ?? {};
+}
+
+/** Lift every mesh under `root` by `deltaY` in world space. */
+function liftSubtreeMeshesWorldY(root, deltaY) {
+  root.traverse((child) => {
+    if (child.isMesh) liftMeshWorldY(child, deltaY);
+  });
+}
+
+/**
+ * Action dampers are exported at rest on the string plane. prepInteriorStack
+ * lifts Piano_Static speaking strings for plate clearance; ride the same offset
+ * on damper heads/tray so felts stay seated on the strings in the viewer.
+ */
+function prepActionStringPlane(root) {
+  root.traverse((obj) => {
+    const part = actionExtras(obj).action_part;
+    if (!part || !ACTION_STRING_LIFT_PARTS.has(part)) return;
+    liftSubtreeMeshesWorldY(obj, STRING_LIFT);
+  });
+}
 
 function meshWorldYExtents(mesh) {
   const pos = mesh.geometry?.attributes?.position;
@@ -625,10 +650,9 @@ function meshWorldYExtents(mesh) {
  */
 export function prepInteriorStack(root) {
   const ps = root.getObjectByName("Piano_Static");
-  if (!ps) return;
 
   // Per-primitive child meshes (current GLB layout).
-  if (!ps.isMesh) {
+  if (ps && !ps.isMesh) {
     let wood = null;
     let bridge = null;
     ps.traverse((obj) => {
@@ -645,11 +669,15 @@ export function prepInteriorStack(root) {
         if (gap < 0.001) liftMeshWorldY(bridge, BRIDGE_LIFT + Math.max(0, -gap));
       }
     }
+    prepActionStringPlane(root);
     return;
   }
 
   // Legacy joined-mesh layout (single multi-material Piano_Static).
-  if (!ps.geometry?.index || !ps.geometry.groups?.length) return;
+  if (!ps?.isMesh || !ps.geometry?.index || !ps.geometry.groups?.length) {
+    prepActionStringPlane(root);
+    return;
+  }
 
   const geo = ps.geometry;
   const pos = geo.attributes.position;
@@ -662,7 +690,10 @@ export function prepInteriorStack(root) {
   const stringMis = new Set(
     materials.flatMap((m, i) => (m && STRING_MAT_RE.test(m.name || "") ? [i] : [])),
   );
-  if (woodMi < 0 || bridgeMi < 0) return;
+  if (woodMi < 0 || bridgeMi < 0) {
+    prepActionStringPlane(root);
+    return;
+  }
 
   ps.updateMatrixWorld(true);
   const inv = ps.matrixWorld.clone().invert();
@@ -686,7 +717,10 @@ export function prepInteriorStack(root) {
       bridgeMaxY = Math.max(bridgeMaxY, y);
     }
   }
-  if (!Number.isFinite(bridgeMinY)) return;
+  if (!Number.isFinite(bridgeMinY)) {
+    prepActionStringPlane(root);
+    return;
+  }
 
   const SINK = 0.003;
   const LIFT = 0.003;
@@ -732,6 +766,8 @@ export function prepInteriorStack(root) {
     geo.computeBoundingSphere();
     geo.computeBoundingBox();
   }
+
+  prepActionStringPlane(root);
 }
 
 /**
