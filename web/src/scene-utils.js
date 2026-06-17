@@ -280,6 +280,27 @@ function lacquerFromExport(mat, { matte, lite }) {
   });
 }
 
+const HINGE_TRIM_NAMES = new Set([
+  "Long_Continuous_Hinge_Top",
+  "Long_Continuous_Hinge_Bottom",
+  "Long_Continuous_Hinge_Rod",
+  "Long_Continuous_Hinge_Screws",
+]);
+
+/** Nudge lid-spine hinge trim forward so thin gold leaves beat lacquer z-fight. */
+export function prepHingeTrim(root) {
+  root.traverse((obj) => {
+    if (!obj.isMesh || !HINGE_TRIM_NAMES.has(obj.name)) return;
+    const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
+    for (const mat of mats) {
+      if (!mat) continue;
+      mat.polygonOffset = true;
+      mat.polygonOffsetFactor = -2;
+      mat.polygonOffsetUnits = -2;
+    }
+  });
+}
+
 /** Tune exported metals (color/roughness); depth is left to the geometry + log buffer. */
 function tuneMetal(mat, fallbackColor, fallbackRough) {
   prepMaps(mat);

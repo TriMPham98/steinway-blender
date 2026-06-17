@@ -17,6 +17,7 @@ import {
   frameModel,
   getHeroCameraPose,
   refineMaterials,
+  prepHingeTrim,
   HERO_CAMERA_DEFAULTS,
   setupEnvironment,
   setupShadows,
@@ -688,6 +689,7 @@ async function init() {
   scene.add(model);
   frameModel(model);
   refineMaterials(model);
+  prepHingeTrim(model);
   setupShadows(model);
   createContactShadow(scene, model);
   const pose = fitCameraToModel(camera, controls, model);

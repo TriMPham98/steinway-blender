@@ -124,6 +124,9 @@ _BENCH_LEG_NAMES = frozenset({"Bench_Leg_01", "Bench_Leg_02", "Bench_Leg_03", "B
 # Lid edge: brass/gold trim and inner wood rim are modeled flush; push trim out and
 # wood back slightly so joined GLB does not z-fight in the web viewer.
 _LID_TRIM_OUTWARD_M = 0.00025  # 0.25 mm along vertex normals
+# Continuous-hinge leaves/screw plate are ~1 mm shells; nudge further out so they
+# clear the lacquered lid in the web viewer (0.25 mm was invisible edge-on).
+_HINGE_TRIM_OUTWARD_M = 0.002  # 2 mm
 _LID_WOOD_INWARD_M = 0.00015  # 0.15 mm
 _LID_TRIM_OBJECTS = (
     "Brass_Sound_Works.001",
@@ -133,6 +136,12 @@ _LID_TRIM_OBJECTS = (
     "Long_Continuous_Hinge_Rod",
     "Long_Continuous_Hinge_Screws",
 )
+_HINGE_TRIM_OBJECTS = frozenset({
+    "Long_Continuous_Hinge_Top",
+    "Long_Continuous_Hinge_Bottom",
+    "Long_Continuous_Hinge_Rod",
+    "Long_Continuous_Hinge_Screws",
+})
 _LID_WOOD_OBJECTS = ("Inside_Rim_Case",)
 
 # Lid prop stick — exported separately, re-origined onto the rim hinge by
@@ -262,6 +271,33 @@ def _strip_stray_curves():
     return removed
 
 
+def _apply_mesh_scales(names):
+    """Bake non-unit object scale into mesh data so glTF local verts are real size.
+
+    Lid rigging (build/case.py) preserves world pose via matrix_parent_inverse but
+    leaves hinge trim at ~0.017 / ~0.005 scale. glTF exports that scale on the
+    node while the mesh stays in huge local coords — Three.js then renders
+    microscopic leaves/screws and only the rod (scale 1) survives.
+    """
+    import bpy
+
+    applied = []
+    for name in names:
+        obj = bpy.data.objects.get(name)
+        if obj is None or obj.type != "MESH":
+            continue
+        if all(abs(s - 1.0) < 1e-4 for s in obj.scale):
+            continue
+        bpy.ops.object.select_all(action="DESELECT")
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
+        bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+        applied.append(name)
+    if applied:
+        print(f"[export] baked object scale into mesh: {', '.join(applied)}")
+    return applied
+
+
 def _push_mesh_along_normals(obj, distance):
     """Offset mesh vertices along their normals (edit-mode push/pull)."""
     import bpy
@@ -287,7 +323,9 @@ def _fix_lid_trim_zfight():
         obj = bpy.data.objects.get(name)
         if obj is None:
             continue
-        if _push_mesh_along_normals(obj, _LID_TRIM_OUTWARD_M):
+        dist = (_HINGE_TRIM_OUTWARD_M if name in _HINGE_TRIM_OBJECTS
+                else _LID_TRIM_OUTWARD_M)
+        if _push_mesh_along_normals(obj, dist):
             moved.append(name)
     for name in _LID_WOOD_OBJECTS:
         obj = bpy.data.objects.get(name)
@@ -575,6 +613,7 @@ def main():
     _remove_bench()
     _remove_bench_legs()
     _strip_stray_curves()
+    _apply_mesh_scales(_CASE_MOVING)
     _fix_lid_trim_zfight()
     case_tagged = _tag_case_parts()
     if case_tagged:
