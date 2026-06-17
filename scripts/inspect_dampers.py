@@ -7,7 +7,7 @@
 import bpy
 
 dec = []
-for name in ("Dampers Tops", "Dampers Bottoms"):
+for name in ("Dampers_Tops", "Dampers_Bottoms"):
     obj = bpy.data.objects.get(name)
     if obj:
         dec.append((name, obj.hide_get(), obj.get("steinway_replaced")))

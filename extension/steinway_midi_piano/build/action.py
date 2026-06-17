@@ -29,7 +29,7 @@ through them, and each hammer's strike height comes from an upward BVH raycast
 against strings / plate / pins / dampers (so heads stop just under whatever is
 actually above them). The imported soundboard slab extends under the strike zone
 where no real soundboard exists, so its front edge is cut back along the action
-line (a real piano's belly-rail gap; hidden under the Music Shelf; the playable
+line (a real piano's belly-rail gap; hidden under the Music_Shelf; the playable
 .blend is fully regenerable from the source model).
 
 Pure ``bpy``/``bmesh`` (no ``bpy.ops``), headless-safe, idempotent: rebuilding
@@ -123,9 +123,9 @@ REPLACED_PROP = "steinway_replaced"
 # fat strings / 51-string pin field) are deliberately absent - they no longer
 # represent the model.
 _OBSTACLES = (
-    "Strings_Full", "Dampers Bottoms", "Dampers Tops",
+    "Strings_Full", "Dampers_Bottoms", "Dampers_Tops",
     "Brass_Sound_Works.001", "Brass_Sound_Works.002",
-    "String Supports-01", "String Supports-02", SOUNDBOARD,
+    "String_Supports_01", "String_Supports_02", SOUNDBOARD,
 )
 
 _MATS = (
@@ -319,7 +319,7 @@ def _clean_series(vals, lo, hi):
 
 def _measure(keys):
     sbins, sw = _xbins(_world_verts("Strings"))
-    dbins, dw = _xbins(_world_verts("Dampers Bottoms"))
+    dbins, dw = _xbins(_world_verts("Dampers_Bottoms"))
     s_front, s_rear, d_front = [], [], []
     for key in keys:
         x = key.location.x
@@ -770,7 +770,7 @@ def _collect_decorative_templates():
     """Snapshot each imported decorative damper unit (top + felt) for reuse."""
     from . import strings as strings_mod
 
-    if bpy.data.objects.get("Dampers Tops") is None:
+    if bpy.data.objects.get("Dampers_Tops") is None:
         return []
     units = strings_mod._damper_units()
     templates = []
@@ -916,8 +916,8 @@ def _build_dampers(plan, coll, mats):
     # Snapshot the imported decorative units, then retire the joined meshes.
     # Each action damper clones the nearest decorative shape but is seated on
     # the fitted action line (not the old 51-string spacing).
-    tops = bpy.data.objects.get("Dampers Tops")
-    bots = bpy.data.objects.get("Dampers Bottoms")
+    tops = bpy.data.objects.get("Dampers_Tops")
+    bots = bpy.data.objects.get("Dampers_Bottoms")
     deco_templates = _collect_decorative_templates()
     for obj in (tops, bots):
         if obj is not None:

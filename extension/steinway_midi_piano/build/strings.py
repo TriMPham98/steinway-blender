@@ -162,7 +162,7 @@ def _steel_material():
 def _damper_units():
     """Cluster the joined damper meshes into per-unit component groups by x."""
     comps_all = []
-    for name in ("Dampers Tops", "Dampers Bottoms"):
+    for name in ("Dampers_Tops", "Dampers_Bottoms"):
         obj = bpy.data.objects.get(name)
         if obj is None or obj.type != "MESH":
             return []
@@ -175,7 +175,7 @@ def _damper_units():
                 "cx": sum(p.x for p in pts) / len(pts),
                 "cy": sum(p.y for p in pts) / len(pts),
                 "zmin": min(p.z for p in pts),
-                "is_felt": name == "Dampers Bottoms",
+                "is_felt": name == "Dampers_Bottoms",
             })
     comps_all.sort(key=lambda d: d["cx"])
     units = []

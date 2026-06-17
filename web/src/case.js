@@ -7,7 +7,7 @@
 
 // Only the prop stick folds. The cup rides the lid (parented to it in the
 // glTF), and the hinge hardware stays put in the static mesh.
-const DEFAULT_LID_PROP_PARTS = ["Lid Support Prop"];
+const DEFAULT_LID_PROP_PARTS = ["Lid_Support_Prop"];
 
 const DEFAULTS = {
   lid_tilt: 0.27,
@@ -79,8 +79,8 @@ function extras(obj) {
 export function buildCaseRig(root, manifestCase) {
   const cfg = { ...DEFAULTS, ...manifestCase };
   const names = {
-    lid_big: cfg.nodes?.lid_big ?? "Large Lid Section",
-    lid_fold_hinge: cfg.nodes?.lid_fold_hinge ?? "Lid Fold Hinge",
+    lid_big: cfg.nodes?.lid_big ?? "Large_Lid_Section",
+    lid_fold_hinge: cfg.nodes?.lid_fold_hinge ?? "Lid_Fold_Hinge",
   };
   const lidPropNames = cfg.nodes?.lid_prop ?? DEFAULT_LID_PROP_PARTS;
 
@@ -99,8 +99,9 @@ export function buildCaseRig(root, manifestCase) {
     byPart.get("lid_fold_hinge") ??
     byName.get(names.lid_fold_hinge) ??
     null;
-  // Prefer the case_part tag: glTF/three.js rewrites node names ("Lid Support
-  // Prop" -> "Lid_Support_Prop"), so a raw manifest-name lookup misses.
+  // Prefer the case_part tag: it survives the glTF round-trip regardless of how
+  // three.js sanitizes node names. Part names are now authored glTF-safe
+  // (Title_Case_With_Underscores), but the tag stays the robust lookup.
   const lidPropParts = [];
   const taggedProp = byPart.get("lid_prop");
   if (taggedProp) {

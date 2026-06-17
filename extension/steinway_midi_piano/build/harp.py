@@ -15,7 +15,7 @@ per physical string (225 for the Model-O-style scale; straight ranks parallel
 to the strike line with the rank cycling pin-to-pin - the diagonal lattice of
 a real pin field - with each string's front end already run to its pin by
 ``strings.course_lines``) plus one hitch pin per course at the rear. The old
-``String Pins`` mesh is hidden and tagged ``steinway_replaced``.
+``String_Pins`` mesh is hidden and tagged ``steinway_replaced``.
 
 Run after ``build/strings.py``. Pure ``bpy``/``bmesh``, headless, idempotent.
 """
@@ -28,7 +28,7 @@ from . import action as action_mod
 from . import strings as strings_mod
 
 PLATE = "Brass_Sound_Works.002"
-OLD_PINS = "String Pins"
+OLD_PINS = "String_Pins"
 TUNING_PINS = "Tuning_Pins"
 HITCH_PINS = "Hitch_Pins"
 CAPO_MARK = "steinway_capo_cut"

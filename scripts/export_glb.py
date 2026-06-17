@@ -8,8 +8,8 @@
 Pipeline (source of truth: ``assets/steinway_grand_playable.blend``):
 
 1. Strip scene props (Floor, oversized meshes).
-2. **Bench** — remove ``Seat Cushion``, ``Seat Frame``, and any ``Piano_Bench``.
-3. **Bench legs** — remove the four bench leg meshes (``Leg-01`` … ``Leg-04``) only.
+2. **Bench** — remove ``Seat_Cushion``, ``Seat_Frame``, and any ``Piano_Bench``.
+3. **Bench legs** — remove the four bench leg meshes (``Bench_Leg_01`` … ``Bench_Leg_04``) only.
 4. **Stray curves** — remove CURVE objects the mesh-only join skips (they'd export
    as standalone meshes, e.g. a gold disc floating above the case rim).
 5. **Body** — join remaining static meshes into ``Piano_Static``.
@@ -116,10 +116,10 @@ def _unhide_all():
 
 
 def _is_bench(obj):
-    return obj.name in ("Seat Cushion", "Seat Frame", "Piano_Bench")
+    return obj.name in ("Seat_Cushion", "Seat_Frame", "Piano_Bench")
 
 
-_BENCH_LEG_NAMES = frozenset({"Leg-01", "Leg-02", "Leg-03", "Leg-04"})
+_BENCH_LEG_NAMES = frozenset({"Bench_Leg_01", "Bench_Leg_02", "Bench_Leg_03", "Bench_Leg_04"})
 
 # Lid edge: brass/gold trim and inner wood rim are modeled flush; push trim out and
 # wood back slightly so joined GLB does not z-fight in the web viewer.
@@ -128,44 +128,44 @@ _LID_WOOD_INWARD_M = 0.00015  # 0.15 mm
 _LID_TRIM_OBJECTS = (
     "Brass_Sound_Works.001",
     "Brass_Sound_Works.002",
-    "Long Continuos Hinge TOP",
-    "Long Continuos Hinge BOTTOM",
-    "Long Continous Hinge ROD",
-    "Long Continous Hinge Screws",
+    "Long_Continuous_Hinge_Top",
+    "Long_Continuous_Hinge_Bottom",
+    "Long_Continuous_Hinge_Rod",
+    "Long_Continuous_Hinge_Screws",
 )
-_LID_WOOD_OBJECTS = ("Inside Rim Case",)
+_LID_WOOD_OBJECTS = ("Inside_Rim_Case",)
 
 # Lid prop stick — exported separately, re-origined onto the rim hinge by
 # build/case.py, so the web viewer can fold it down as the lid closes. The
 # hinge hardware (rod, screws, bracket) is the pivot and stays put in
 # Piano_Static; the cup rides the lid (see _CASE_MOVING below).
 _LID_PROP_PARTS = (
-    "Lid Support Prop",
+    "Lid_Support_Prop",
 )
 
 # Case parts driven by scene props in build/case.py — keep out of Piano_Static.
 _CASE_MOVING = frozenset({
-    "Fall Board",
-    "Large Lid Section",
-    "Small Lid Section",
-    "Long Continuos Hinge BOTTOM",
-    "Long Continous Hinge ROD",
-    "Long Continous Hinge Screws",
-    "Large Lid Rubber Cushions",
-    "Long Continuos Hinge TOP",
-    "Small Lid Rubber Cushions",
+    "Fall_Board",
+    "Large_Lid_Section",
+    "Small_Lid_Section",
+    "Long_Continuous_Hinge_Bottom",
+    "Long_Continuous_Hinge_Rod",
+    "Long_Continuous_Hinge_Screws",
+    "Large_Lid_Rubber_Cushions",
+    "Long_Continuous_Hinge_Top",
+    "Small_Lid_Rubber_Cushions",
     # Parented to the big lid by build/case.py so they swing with it; keep them
     # out of Piano_Static. (Spine butt-hinge leaves + the prop's lid-side cup.)
-    "Lid Butt Hinge",
-    "Lid Butt Hinge.001",
-    "Lid Support Cup",
+    "Lid_Butt_Hinge",
+    "Lid_Butt_Hinge.001",
+    "Lid_Support_Cup",
     *_LID_PROP_PARTS,
 })
 _CASE_TAGS = {
-    "Large Lid Section": "lid_big",
-    "Lid Fold Hinge": "lid_fold_hinge",
-    "Fall Board": "fallboard",
-    "Lid Support Prop": "lid_prop",
+    "Large_Lid_Section": "lid_big",
+    "Lid_Fold_Hinge": "lid_fold_hinge",
+    "Fall_Board": "fallboard",
+    "Lid_Support_Prop": "lid_prop",
 }
 _CASE_FOLD_BACK = 3.05
 _CASE_FALL_CLOSED = 1.48
@@ -208,10 +208,10 @@ def _remove_bench_legs():
 
 
 def _strip_lid_hinge():
-    """Remove leftover 0.5.x lid rig so the glTF scene root is not Key Lid Hinge."""
+    """Remove leftover 0.5.x lid rig so the glTF scene root is not Key_Lid_Hinge."""
     import bpy
 
-    hinge = bpy.data.objects.get("Key Lid Hinge")
+    hinge = bpy.data.objects.get("Key_Lid_Hinge")
     if hinge is None:
         return
     for child in list(hinge.children):
@@ -359,9 +359,9 @@ def _tag_case_parts():
 def _case_manifest():
     import bpy
 
-    big = bpy.data.objects.get("Large Lid Section")
+    big = bpy.data.objects.get("Large_Lid_Section")
     tilt = round(_lid_tilt(big), 6) if big is not None and big.type == "MESH" else 0.27
-    prop = bpy.data.objects.get("Lid Support Prop")
+    prop = bpy.data.objects.get("Lid_Support_Prop")
     prop_fold = round(float(prop.get("fold_angle", -1.0245)), 6) if prop else -1.0245
     return {
         "lid_tilt": tilt,
@@ -369,9 +369,9 @@ def _case_manifest():
         "fall_closed": _CASE_FALL_CLOSED,
         "prop_fold": prop_fold,
         "nodes": {
-            "lid_big": "Large Lid Section",
-            "lid_fold_hinge": "Lid Fold Hinge",
-            "fallboard": "Fall Board",
+            "lid_big": "Large_Lid_Section",
+            "lid_fold_hinge": "Lid_Fold_Hinge",
+            "fallboard": "Fall_Board",
             "lid_prop": list(_LID_PROP_PARTS),
         },
         "defaults": {

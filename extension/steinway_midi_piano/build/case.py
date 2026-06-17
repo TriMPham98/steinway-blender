@@ -33,31 +33,31 @@ from mathutils import Vector
 
 RIGGED = "steinway_rigged"
 RIG_VERSION = 5
-NAMEBOARD = "Name Board"
+NAMEBOARD = "Name_Board"
 
-FALLBOARD = "Fall Board"
+FALLBOARD = "Fall_Board"
 FALL_HINGE = (-0.705, 0.735)        # hinge line (y, z), along X
 FALL_CLOSED = 1.48                  # rad forward to lie over the keys
 
-LID_BIG = "Large Lid Section"
-LID_SMALL = "Small Lid Section"
+LID_BIG = "Large_Lid_Section"
+LID_SMALL = "Small_Lid_Section"
 SPINE = (-0.564, 0.982)             # hinge line (x, z), along Y
-LID_PARTS_BIG = ("Long Continuos Hinge BOTTOM", "Long Continous Hinge ROD",
-                 "Long Continous Hinge Screws", "Large Lid Rubber Cushions")
-LID_PARTS_SMALL = ("Long Continuos Hinge TOP", "Small Lid Rubber Cushions")
+LID_PARTS_BIG = ("Long_Continuous_Hinge_Bottom", "Long_Continuous_Hinge_Rod",
+                 "Long_Continuous_Hinge_Screws", "Large_Lid_Rubber_Cushions")
+LID_PARTS_SMALL = ("Long_Continuous_Hinge_Top", "Small_Lid_Rubber_Cushions")
 FOLD_BACK = 3.05                    # rad: front flap folded back on the lid
 
 # Lid prop stick: hinged on the rim, stands up to hold the lid. As the lid
 # closes it folds down flat into its trough instead of staying upright.
-LID_PROP = "Lid Support Prop"
-LID_PROP_CUP = "Lid Support Cup"        # rides the prop tip, under the lid
-LID_PROP_HINGE = "Lid Prop Hinge Rod"   # the rod the prop pivots on (along Y)
+LID_PROP = "Lid_Support_Prop"
+LID_PROP_CUP = "Lid_Support_Cup"        # rides the prop tip, under the lid
+LID_PROP_HINGE = "Lid_Prop_Hinge_Rod"   # the rod the prop pivots on (along Y)
 LID_PROP_PIVOT = (0.849, -0.358, 0.953)  # fallback if the rod is missing
 LID_PROP_FOLD = -1.0245                  # fallback fold-down angle (rad, about Y)
 
 # Spine butt hinges: the lid-side leaves ride on the spine and must swing with
 # the big lid; the base leaves and pins stay bolted to the rim.
-LID_BUTT_HINGES = ("Lid Butt Hinge", "Lid Butt Hinge.001")
+LID_BUTT_HINGES = ("Lid_Butt_Hinge", "Lid_Butt_Hinge.001")
 
 
 def _scene_prop(name, default):
@@ -99,7 +99,7 @@ def _bake_basis(obj):
 
     Two reasons: (1) a driver on a single rotation channel then rotates about
     that *world* axis (the prop's authored X/Z tilt would otherwise twist a
-    local-Y fold out of its swing plane); (2) the LID PROP parts carry a tiny
+    local-Y fold out of its swing plane); (2) the Lid_Prop parts carry a tiny
     ~0.0004 object scale with ~2000-unit mesh coords, which glTF keeps as a
     micro-scaled node that three.js silently drops on load. Baking the basis
     normalises them to scale 1 like every other case part. World pose is
@@ -146,7 +146,7 @@ def _rig_fallboard():
     if obj.get(RIGGED, 0) == RIG_VERSION:
         return "already-rigged"
     if not obj.get(RIGGED):
-        hinge = bpy.data.objects.get("Key Lid Hinge")
+        hinge = bpy.data.objects.get("Key_Lid_Hinge")
         y, z = ((hinge.location.y, hinge.location.z) if hinge is not None
                 else FALL_HINGE)
         _reorigin(obj, (obj.matrix_world.translation.x, y, z))
@@ -188,11 +188,11 @@ def _rig_lid():
         # Already re-origined: the baked-open plane still gives the tilt.
         tilt = _lid_angle(big)
 
-    hinge = bpy.data.objects.get("Lid Fold Hinge")
+    hinge = bpy.data.objects.get("Lid_Fold_Hinge")
     if first or hinge is None:
         # Fold hinge between the sections: a frame empty tilted with the lid
         # plane carries a hinge empty whose local X is the fold axis.
-        hb = bpy.data.objects.get("Long Continuos Hinge BOTTOM")
+        hb = bpy.data.objects.get("Long_Continuous_Hinge_Bottom")
         if hb is not None:
             pts = [hb.matrix_world @ Vector(c) for c in hb.bound_box]
             pivot = Vector((min(p.x for p in pts),
@@ -200,7 +200,7 @@ def _rig_lid():
                             min(p.z for p in pts) + 0.004))
         else:
             pivot = Vector((-0.552, -0.412, 1.009))
-        frame = bpy.data.objects.new("Lid Fold Frame", None)
+        frame = bpy.data.objects.new("Lid_Fold_Frame", None)
         frame.empty_display_size = 0.05
         bpy.context.scene.collection.objects.link(frame)
         frame.matrix_world = (mathutils.Matrix.Translation(pivot)
@@ -208,7 +208,7 @@ def _rig_lid():
         frame.parent = big
         frame.matrix_parent_inverse = (
             mathutils.Matrix.Translation((SPINE[0], 0.0, SPINE[1])).inverted())
-        hinge = bpy.data.objects.new("Lid Fold Hinge", None)
+        hinge = bpy.data.objects.new("Lid_Fold_Hinge", None)
         hinge.empty_display_size = 0.05
         bpy.context.scene.collection.objects.link(hinge)
         hinge.parent = frame
