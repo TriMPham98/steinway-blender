@@ -27,6 +27,7 @@ const LID_ANIM_DURATION = 2.3;
 const LID_OVEREXTEND = 0.12; // rad the lid rises above its open rest pose
 const LIFT_T = 0.86; // lidOpen in [LIFT_T,1]: lid lifting off the prop
 const FOLD_T = 0.4; // lidOpen in [FOLD_T,LIFT_T]: prop folds; below: lid descends
+const LID_SEAT_DROP = 0.013; // metres the lid lowers onto the rim once shut
 
 function lerp(a, b, u) {
   return a + (b - a) * u;
@@ -56,6 +57,12 @@ function lidCloseOffset(t, lidTilt) {
 // Prop fold: 0 = upright, 1 = flat. Only folds once the lid has lifted clear.
 function propFoldFrac(t) {
   return smoothstep((LIFT_T - t) / (LIFT_T - FOLD_T));
+}
+
+// Seat drop: 0 until the lid starts its final descent, 1 fully shut. Tracks the
+// descent phase so the lid lowers onto the rim exactly as it rotates flat.
+function lidSeatFrac(t) {
+  return smoothstep((FOLD_T - t) / FOLD_T);
 }
 
 function extras(obj) {
@@ -104,6 +111,7 @@ export function buildCaseRig(root, manifestCase) {
 
   const rest = {
     lidBigZ: lidBig?.rotation.z ?? 0,
+    lidBigY: lidBig?.position.y ?? 0,
     foldX: foldHinge?.rotation.x ?? 0,
     propZ: lidPropParts.map((p) => p.rotation.z),
   };
@@ -123,6 +131,9 @@ export function buildCaseRig(root, manifestCase) {
       if (lidBig) {
         lidBig.rotation.z =
           rest.lidBigZ - lidCloseOffset(lidOpen, cfg.lid_tilt);
+        // Rotating about the spine alone leaves the closed lid hovering ~1cm
+        // above the rim, so drop it onto the body during the final descent.
+        lidBig.position.y = rest.lidBigY - LID_SEAT_DROP * lidSeatFrac(lidOpen);
       }
       if (foldHinge) {
         foldHinge.rotation.x = rest.foldX;
