@@ -287,6 +287,11 @@ function tuneMetal(mat, fallbackColor, fallbackRough) {
   mat.roughness = fallbackRough;
   mat.envMapIntensity = 1.28;
   if (mat.normalMap) mat.normalScale.set(1.1, 1.1);
+  // Render metal double-sided: the thin gold lid-spine trim (continuous-hinge
+  // leaves + screw plate) are flat shells whose winding faces *into* the lid, so
+  // single-sided FrontSide culls them and only the curved rod survives. The
+  // global side assignment below honors this DoubleSide flag.
+  mat.side = THREE.DoubleSide;
   // The materialiq metals export a flat *grayscale* base-color texture; the gold/
   // brass/copper hue lived in the Blender base-color factor, which glTF dropped
   // (defaults to white). Used as albedo, that gray map makes the metal mirror the
@@ -372,7 +377,9 @@ export function refineMaterials(root) {
       next = mat;
     }
 
-    next.side = THREE.FrontSide;
+    // Default to FrontSide, but keep DoubleSide where a branch asked for it
+    // (thin metal trim that would otherwise be backface-culled).
+    if (next.side !== THREE.DoubleSide) next.side = THREE.FrontSide;
     cache.set(mat.uuid, next);
     return next;
   };

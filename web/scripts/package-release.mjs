@@ -20,7 +20,8 @@ if (!fs.existsSync(dist)) {
 if (!fs.existsSync(path.join(modelsSrc, "steinway.glb"))) {
   console.error(
     "Missing public/models/steinway.glb — export from Blender:\n" +
-      "  Blender --background assets/steinway_grand_playable.blend --python scripts/export_glb.py",
+      "  Blender --background assets/steinway_grand_playable.blend --python scripts/export_glb.py -- \\\n" +
+      "    --out web/public/models/steinway.glb --with-action",
   );
   process.exit(1);
 }
