@@ -280,30 +280,29 @@ function lacquerFromExport(mat, { matte, lite }) {
   });
 }
 
-const HINGE_LEAF_NAMES = new Set([
-  "Long_Continuous_Hinge_Top",
-  "Long_Continuous_Hinge_Bottom",
-  "Long_Continuous_Hinge_Screws",
-]);
+/** Opposing depth bias: bottom leaf behind, top/screws in front. */
+const HINGE_DEPTH_BIAS = {
+  Long_Continuous_Hinge_Bottom: { factor: 1, units: 1 },
+  Long_Continuous_Hinge_Top: { factor: -1.5, units: -1.5 },
+  Long_Continuous_Hinge_Screws: { factor: -2, units: -2 },
+};
 
 /**
- * Thin hinge leaves/screw plate: export pushes them off the lacquer just enough
- * to see. Render front faces only — DoubleSide on ~1 mm shells drew both sides at
- * the same depth and flickered against the lid (and each other).
+ * Thin hinge leaves/screw plate: export splits the top/bottom stack and tiers
+ * normal push. Front faces only; opposing polygon bias clears residual coplanar
+ * flicker where the two ~1 mm shells overlap (e.g. around middle C).
  */
 export function prepHingeTrim(root) {
   root.traverse((obj) => {
-    if (!obj.isMesh || !HINGE_LEAF_NAMES.has(obj.name)) return;
+    const bias = HINGE_DEPTH_BIAS[obj.name];
+    if (!obj.isMesh || !bias) return;
     const cloneMat = (mat) => {
       if (!mat) return mat;
       const next = mat.clone();
       next.side = THREE.FrontSide;
-      // Mild depth bias on the cloned leaf materials only — geometry is already
-      // tiered at export; this mops up residual lacquer flicker without the
-      // heavy -2 bias that punched gold through the case.
       next.polygonOffset = true;
-      next.polygonOffsetFactor = -1;
-      next.polygonOffsetUnits = -1;
+      next.polygonOffsetFactor = bias.factor;
+      next.polygonOffsetUnits = bias.units;
       return next;
     };
     obj.material = Array.isArray(obj.material)

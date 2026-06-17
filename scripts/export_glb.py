@@ -343,6 +343,50 @@ def _fix_lid_trim_zfight():
     return moved
 
 
+def _avg_world_normal(obj):
+    """Mean face normal in world space (for hinge-leaf separation)."""
+    import bmesh
+    from mathutils import Vector
+
+    mw = obj.matrix_world.to_3x3()
+    bm = bmesh.new()
+    bm.from_mesh(obj.data)
+    bm.faces.ensure_lookup_table()
+    acc = Vector((0.0, 0.0, 0.0))
+    for face in bm.faces:
+        acc += (mw @ face.normal).normalized()
+    bm.free()
+    return acc.normalized() if acc.length else Vector((0.0, 1.0, 0.0))
+
+
+def _split_hinge_leaves():
+    """Separate the top/bottom continuous-hinge leaves along the stack axis.
+
+    The two ~1 mm shells were modeled coplanar (often <0.4 mm apart). Normal
+    push moves both sheets equally so they still z-fight — especially in the
+    ~15 cm band visible around middle C. Rigid offsets along the bottom-leaf
+    normal open a real gap; screws ride slightly further out.
+    """
+    import bpy
+    from mathutils import Matrix
+
+    top = bpy.data.objects.get("Long_Continuous_Hinge_Top")
+    bot = bpy.data.objects.get("Long_Continuous_Hinge_Bottom")
+    scr = bpy.data.objects.get("Long_Continuous_Hinge_Screws")
+    if top is None or bot is None:
+        return []
+    axis = _avg_world_normal(bot)
+    half = 0.0012  # 1.2 mm each way (2.4 mm total leaf gap)
+    top.matrix_world = Matrix.Translation(axis * half) @ top.matrix_world
+    bot.matrix_world = Matrix.Translation(-axis * half) @ bot.matrix_world
+    moved = [top.name, bot.name]
+    if scr is not None:
+        scr.matrix_world = Matrix.Translation(axis * 0.0016) @ scr.matrix_world
+        moved.append(scr.name)
+    print(f"[export] hinge leaf stack split: {', '.join(moved)} ({half * 2000:.1f} mm gap)")
+    return moved
+
+
 def _join_static():
     import bpy
 
@@ -620,6 +664,7 @@ def main():
     _strip_stray_curves()
     _apply_mesh_scales(_CASE_MOVING)
     _fix_lid_trim_zfight()
+    _split_hinge_leaves()
     case_tagged = _tag_case_parts()
     if case_tagged:
         print(f"[export] case parts tagged: {', '.join(case_tagged)}")
