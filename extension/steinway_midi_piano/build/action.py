@@ -106,6 +106,10 @@ HAM_DROP = 0.026
 HAM_IMPULSE = 0.45                            # gain on the live key["hammer"]
 
 SOUNDBOARD = "Soundboard"
+BRIDGE = "String_Supports_02"
+BRIDGE_SEAT_MARK = "steinway_bridge_seated"
+BRIDGE_SEAT_VERSION = 1
+BRIDGE_SEAT_LIFT = 0.0015   # world +Z; ~0.6 mm clearance after ~0.9 mm overlap
 CUT_MARGIN = 0.082       # soundboard removed for y < strike line + this margin
 CUT_DEEP = 0.150         # extra slot for the damper wires (bass of CUT_DEEP_X)
 CUT_DEEP_X = 0.428       # the treble bridge sits too close beyond this x
@@ -436,6 +440,38 @@ def _cut_soundboard(plan):
     sb.data.update()
     sb[CUT_MARK] = CUT_VERSION
     return f"cut v{CUT_VERSION}"
+
+
+def _world_z_bounds(obj):
+    mw = obj.matrix_world
+    return min((mw @ v.co).z for v in obj.data.vertices), max(
+        (mw @ v.co).z for v in obj.data.vertices)
+
+
+def _seat_bridge_on_soundboard():
+    """Lift the treble bridge off the soundboard top (imported coplanar overlap)."""
+    sb = bpy.data.objects.get(SOUNDBOARD)
+    br = bpy.data.objects.get(BRIDGE)
+    if br is None:
+        return "missing-bridge"
+    if br.get(BRIDGE_SEAT_MARK, 0) == BRIDGE_SEAT_VERSION:
+        return "already-seated"
+    if sb is not None:
+        _, sb_top = _world_z_bounds(sb)
+        br_bot, _ = _world_z_bounds(br)
+        gap = br_bot - sb_top
+        if gap >= 0.0003:
+            br[BRIDGE_SEAT_MARK] = BRIDGE_SEAT_VERSION
+            return f"ok ({gap * 1000:.2f} mm clearance)"
+    br.matrix_world = (
+        mathutils.Matrix.Translation((0.0, 0.0, BRIDGE_SEAT_LIFT)) @ br.matrix_world
+    )
+    br[BRIDGE_SEAT_MARK] = BRIDGE_SEAT_VERSION
+    if sb is not None:
+        _, sb_top = _world_z_bounds(sb)
+        br_bot, _ = _world_z_bounds(br)
+        return f"lifted {BRIDGE_SEAT_LIFT * 1000:.1f} mm (gap { (br_bot - sb_top) * 1000:.2f} mm)"
+    return f"lifted {BRIDGE_SEAT_LIFT * 1000:.1f} mm"
 
 
 # --------------------------------------------------------------------------- #
@@ -1132,6 +1168,7 @@ def build():
     meas = _measure(keys)
     plan = _plan(keys, meas)
     cut = _cut_soundboard(plan)
+    seated = _seat_bridge_on_soundboard()
     flagged = _strike_heights(plan)
     coll = _fresh_collection()
     mats = _materials()
@@ -1145,6 +1182,7 @@ def build():
         "notes": len(plan["notes"]),
         "objects": len(coll.objects),
         "soundboard": cut,
+        "bridge_seat": seated,
         "action_line": (round(a, 4), round(b, 4)),
         "strike_z": (round(min(szs), 4), round(max(szs), 4)),
         "shank": (round(min(n["shank"] for n in plan["notes"]), 4),

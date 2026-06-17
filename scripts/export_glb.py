@@ -151,9 +151,12 @@ _LID_WOOD_OBJECTS = ("Inside_Rim_Case",)
 
 # Harp interior: stays in Piano_Static; tier normal push + distinct brass
 # materials (rim vs plate) so the viewer can depth-bias each layer.
+_BRIDGE_SEAT_MARK = "steinway_bridge_seated"
+_BRIDGE_SEAT_VERSION = 1
+_BRIDGE_MIN_CLEARANCE_M = 0.0006   # target gap after seating (meters)
+
 _INTERIOR_TRIM_PUSH = {
-    "Soundboard": -0.0005,            # 0.5 mm into the wood
-    "String_Supports_02": -0.00035,   # bridge wood under the plate
+    "Soundboard": -0.0015,            # 1.5 mm inset under the seated bridge
     "String_Supports_01": 0.00015,
     "Brass_Sound_Works.002": 0.00045,  # capo / web plate
     "Brass_Sound_Works.001": 0.00055,  # main gold pin-field board
@@ -410,6 +413,47 @@ def _split_interior_materials():
     if tagged:
         print(f"[export] interior material split: {', '.join(tagged)}")
     return tagged
+
+
+def _world_z_extents(obj):
+    from mathutils import Vector
+
+    mw = obj.matrix_world
+    zs = [(mw @ Vector(v.co)).z for v in obj.data.vertices]
+    return min(zs), max(zs)
+
+
+def _seat_soundboard_bridge():
+    """Lift the bridge off the soundboard if the import left them coplanar."""
+    import bpy
+    from mathutils import Matrix
+
+    sb = bpy.data.objects.get("Soundboard")
+    br = bpy.data.objects.get("String_Supports_02")
+    if br is None:
+        return None
+    if br.get(_BRIDGE_SEAT_MARK, 0) == _BRIDGE_SEAT_VERSION:
+        return f"{br.name} (already seated)"
+    if sb is not None:
+        _, sb_top = _world_z_extents(sb)
+        br_bot, _ = _world_z_extents(br)
+        gap = br_bot - sb_top
+        if gap >= 0.0003:
+            br[_BRIDGE_SEAT_MARK] = _BRIDGE_SEAT_VERSION
+            return f"{br.name} ({gap * 1000:.2f} mm clearance, no lift)"
+        lift = _BRIDGE_MIN_CLEARANCE_M - gap
+    else:
+        lift = 0.0015
+    br.matrix_world = Matrix.Translation((0.0, 0.0, lift)) @ br.matrix_world
+    br[_BRIDGE_SEAT_MARK] = _BRIDGE_SEAT_VERSION
+    if sb is not None:
+        _, sb_top = _world_z_extents(sb)
+        br_bot, _ = _world_z_extents(br)
+        return (
+            f"{br.name} (+{lift * 1000:.2f} mm -> "
+            f"{(br_bot - sb_top) * 1000:.2f} mm clearance)"
+        )
+    return f"{br.name} (+{lift * 1000:.2f} mm)"
 
 
 def _fix_interior_zfight():
@@ -735,6 +779,9 @@ def main():
     _fix_lid_trim_zfight()
     _split_hinge_leaves()
     _split_interior_materials()
+    seated = _seat_soundboard_bridge()
+    if seated:
+        print(f"[export] bridge seated on soundboard: {seated}")
     _fix_interior_zfight()
     case_tagged = _tag_case_parts()
     if case_tagged:

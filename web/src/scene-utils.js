@@ -365,8 +365,8 @@ function tuneWood(mat) {
 function applyInteriorDepthBias(mat, name) {
   if (/Soundboard|Bridge/i.test(name) && /wood|beech|maple/i.test(name)) {
     mat.polygonOffset = true;
-    mat.polygonOffsetFactor = 3;
-    mat.polygonOffsetUnits = 3;
+    mat.polygonOffsetFactor = 4;
+    mat.polygonOffsetUnits = 4;
     return;
   }
   if (/^2B_Wood|wood|beech|maple/i.test(name) && !/^Action_/i.test(name)) {
