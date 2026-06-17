@@ -361,31 +361,54 @@ function tuneWood(mat) {
   return mat;
 }
 
-/** Depth stack for the joined harp interior (Piano_Static material groups). */
+/** Depth stack for rim wood still joined into Piano_Static. */
 function applyInteriorDepthBias(mat, name) {
   if (/^2B_Wood|wood|beech|maple/i.test(name) && !/^Action_/i.test(name)) {
     mat.polygonOffset = true;
     mat.polygonOffsetFactor = 2;
     mat.polygonOffsetUnits = 2;
-    return;
   }
-  if (/^0T_Brass/i.test(name)) {
-    mat.polygonOffset = true;
-    mat.polygonOffsetFactor = 0.5;
-    mat.polygonOffsetUnits = 0.5;
-    return;
-  }
-  if (/^0C_Copper|^Strings_Steel/i.test(name)) {
-    mat.polygonOffset = true;
-    mat.polygonOffsetFactor = -1.5;
-    mat.polygonOffsetUnits = -1.5;
-    return;
-  }
-  if (/^0A_Steel/i.test(name)) {
-    mat.polygonOffset = true;
-    mat.polygonOffsetFactor = -1;
-    mat.polygonOffsetUnits = -1;
-  }
+}
+
+/** Per-mesh depth bias for harp parts exported outside Piano_Static. */
+const INTERIOR_MESH_BIAS = {
+  Soundboard: { factor: 4, units: 4 },
+  String_Supports_02: { factor: 3, units: 3 },
+  String_Supports_01: { factor: 2, units: 2 },
+  Brass_Sound_Works_002: { factor: 1, units: 1 },
+  Brass_Sound_Works_001: { factor: 1.5, units: 1.5 },
+  "Brass_Sound_Works.002": { factor: 1, units: 1 },
+  "Brass_Sound_Works.001": { factor: 1.5, units: 1.5 },
+  Strings_Full: { factor: -2.5, units: -2.5 },
+  Tuning_Pins: { factor: -1.5, units: -1.5 },
+  Hitch_Pins: { factor: -1.5, units: -1.5 },
+};
+
+function interiorMeshBias(name) {
+  return (
+    INTERIOR_MESH_BIAS[name] ??
+    INTERIOR_MESH_BIAS[name.replace(/\./g, "_")] ??
+    null
+  );
+}
+
+/** Clone materials on separate harp meshes so plate/strings can diverge in depth. */
+export function prepInteriorStack(root) {
+  root.traverse((obj) => {
+    const bias = interiorMeshBias(obj.name || "");
+    if (!obj.isMesh || !bias) return;
+    const cloneMat = (mat) => {
+      if (!mat) return mat;
+      const next = mat.clone();
+      next.polygonOffset = true;
+      next.polygonOffsetFactor = bias.factor;
+      next.polygonOffsetUnits = bias.units;
+      return next;
+    };
+    obj.material = Array.isArray(obj.material)
+      ? obj.material.map(cloneMat)
+      : cloneMat(obj.material);
+  });
 }
 
 /**

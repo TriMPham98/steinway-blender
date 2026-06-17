@@ -149,12 +149,27 @@ _HINGE_TRIM_OBJECTS = frozenset({
 })
 _LID_WOOD_OBJECTS = ("Inside_Rim_Case",)
 
-# Harp interior: soundboard, cast plate, and strings are modeled flush and join
-# into Piano_Static — tier normal push before the join so they do not z-fight.
+# Harp interior: keep out of Piano_Static (separate glTF nodes) and tier normal
+# push so wood / brass plate / strings / pins do not z-fight once joined.
+_INTERIOR_SEPARATE = frozenset({
+    "Soundboard",
+    "String_Supports_01",
+    "String_Supports_02",
+    "Brass_Sound_Works.001",
+    "Brass_Sound_Works.002",
+    "Strings_Full",
+    "Tuning_Pins",
+    "Hitch_Pins",
+})
 _INTERIOR_TRIM_PUSH = {
-    "Soundboard": -0.00025,           # 0.25 mm into the wood
-    "Brass_Sound_Works.002": 0.0002,  # plate above soundboard
-    "Strings_Full": 0.00035,          # strings above plate web
+    "Soundboard": -0.0005,            # 0.5 mm into the wood
+    "String_Supports_02": -0.00035,   # bridge wood under the plate
+    "String_Supports_01": 0.00015,
+    "Brass_Sound_Works.002": 0.00045,  # capo / web plate
+    "Brass_Sound_Works.001": 0.00055,  # main gold pin-field board
+    "Strings_Full": 0.00075,
+    "Tuning_Pins": 0.00085,
+    "Hitch_Pins": 0.00065,
 }
 
 # Lid prop stick — exported separately, re-origined onto the rim hinge by
@@ -195,6 +210,10 @@ _CASE_FALL_CLOSED = 1.48
 
 def _is_case_moving(obj):
     return obj.name in _CASE_MOVING
+
+
+def _is_interior_separate(obj):
+    return obj.name in _INTERIOR_SEPARATE
 
 
 def _is_bench_leg(obj):
@@ -421,6 +440,8 @@ def _join_static():
         if _is_key(obj) or _is_pedal(obj) or _is_bench(obj) or _is_bench_leg(obj):
             continue
         if _is_case_moving(obj):
+            continue
+        if _is_interior_separate(obj):
             continue
         if _is_action(obj):     # moving parts (with --with-action) stay separate
             continue
