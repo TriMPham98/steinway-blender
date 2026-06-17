@@ -358,11 +358,34 @@ function tuneWood(mat) {
   mat.envMapIntensity = 1.1;
   if (mat.normalMap) mat.normalScale.set(1.15, 1.15);
   if (!mat.map) mat.color = new THREE.Color(0x7c5a3a);
-  // Inner rim wood sits under lacquer at the lid edge — nudge behind trim/lacquer.
-  mat.polygonOffset = true;
-  mat.polygonOffsetFactor = 1;
-  mat.polygonOffsetUnits = 1;
   return mat;
+}
+
+/** Depth stack for the joined harp interior (Piano_Static material groups). */
+function applyInteriorDepthBias(mat, name) {
+  if (/^2B_Wood|wood|beech|maple/i.test(name) && !/^Action_/i.test(name)) {
+    mat.polygonOffset = true;
+    mat.polygonOffsetFactor = 2;
+    mat.polygonOffsetUnits = 2;
+    return;
+  }
+  if (/^0T_Brass/i.test(name)) {
+    mat.polygonOffset = true;
+    mat.polygonOffsetFactor = 0.5;
+    mat.polygonOffsetUnits = 0.5;
+    return;
+  }
+  if (/^0C_Copper|^Strings_Steel/i.test(name)) {
+    mat.polygonOffset = true;
+    mat.polygonOffsetFactor = -1.5;
+    mat.polygonOffsetUnits = -1.5;
+    return;
+  }
+  if (/^0A_Steel/i.test(name)) {
+    mat.polygonOffset = true;
+    mat.polygonOffsetFactor = -1;
+    mat.polygonOffsetUnits = -1;
+  }
 }
 
 /**
@@ -411,6 +434,7 @@ export function refineMaterials(root) {
     // Default to FrontSide, but keep DoubleSide where a branch asked for it
     // (thin metal trim that would otherwise be backface-culled).
     if (next.side !== THREE.DoubleSide) next.side = THREE.FrontSide;
+    applyInteriorDepthBias(next, name);
     cache.set(mat.uuid, next);
     return next;
   };

@@ -136,7 +136,6 @@ _HINGE_TRIM_PUSH = {
 _LID_WOOD_INWARD_M = 0.00015  # 0.15 mm
 _LID_TRIM_OBJECTS = (
     "Brass_Sound_Works.001",
-    "Brass_Sound_Works.002",
     "Long_Continuous_Hinge_Top",
     "Long_Continuous_Hinge_Bottom",
     "Long_Continuous_Hinge_Rod",
@@ -149,6 +148,14 @@ _HINGE_TRIM_OBJECTS = frozenset({
     "Long_Continuous_Hinge_Screws",
 })
 _LID_WOOD_OBJECTS = ("Inside_Rim_Case",)
+
+# Harp interior: soundboard, cast plate, and strings are modeled flush and join
+# into Piano_Static — tier normal push before the join so they do not z-fight.
+_INTERIOR_TRIM_PUSH = {
+    "Soundboard": -0.00025,           # 0.25 mm into the wood
+    "Brass_Sound_Works.002": 0.0002,  # plate above soundboard
+    "Strings_Full": 0.00035,          # strings above plate web
+}
 
 # Lid prop stick — exported separately, re-origined onto the rim hinge by
 # build/case.py, so the web viewer can fold it down as the lid closes. The
@@ -357,6 +364,22 @@ def _avg_world_normal(obj):
         acc += (mw @ face.normal).normalized()
     bm.free()
     return acc.normalized() if acc.length else Vector((0.0, 1.0, 0.0))
+
+
+def _fix_interior_zfight():
+    """Tier soundboard / plate / strings before they are joined into Piano_Static."""
+    import bpy
+
+    moved = []
+    for name, dist in _INTERIOR_TRIM_PUSH.items():
+        obj = bpy.data.objects.get(name)
+        if obj is None:
+            continue
+        if _push_mesh_along_normals(obj, dist):
+            moved.append(f"{name} ({dist * 1000:.2f} mm)")
+    if moved:
+        print(f"[export] interior z-fight offset: {', '.join(moved)}")
+    return moved
 
 
 def _split_hinge_leaves():
@@ -665,6 +688,7 @@ def main():
     _apply_mesh_scales(_CASE_MOVING)
     _fix_lid_trim_zfight()
     _split_hinge_leaves()
+    _fix_interior_zfight()
     case_tagged = _tag_case_parts()
     if case_tagged:
         print(f"[export] case parts tagged: {', '.join(case_tagged)}")
