@@ -494,6 +494,74 @@ body,
   max-height: min(28vh, 220px);
 }
 
+.debug-stack .zfight-probe[open] .scene-debug-body {
+  max-height: min(42vh, 320px);
+}
+
+.zfight-probe-hint {
+  margin: 0 0 0.45rem;
+  font-size: 0.62rem;
+  line-height: 1.35;
+  color: #6d7890;
+}
+
+.zfight-probe-status {
+  margin-bottom: 0.35rem;
+  font-size: 0.62rem;
+  line-height: 1.35;
+  color: #9aa6bc;
+}
+
+.zfight-probe-status--warn {
+  color: #e8c06a;
+}
+
+.zfight-probe-status--ok {
+  color: #7dcda8;
+}
+
+.zfight-probe-table-wrap {
+  overflow-x: auto;
+  margin-bottom: 0.35rem;
+}
+
+.zfight-probe-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.6rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.zfight-probe-table th,
+.zfight-probe-table td {
+  padding: 0.15rem 0.2rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  white-space: nowrap;
+}
+
+.zfight-probe-table th {
+  color: #6d7890;
+  font-weight: 600;
+}
+
+.zfight-probe-coplanar td {
+  color: #e8c06a;
+  background: rgba(232, 192, 106, 0.08);
+}
+
+.zfight-probe-detail {
+  margin: 0;
+  padding: 0.35rem 0.4rem;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.25);
+  font-size: 0.58rem;
+  line-height: 1.45;
+  color: #a8b4c8;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .scene-debug[open] .scene-debug-body {
   max-height: calc(58vh - 2rem);
   overflow-y: auto;

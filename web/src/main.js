@@ -620,6 +620,8 @@ function releaseAllLocalNotes() {
 
 function onPointerDownCapture(event) {
   if (event.button !== 0) return;
+  // Shift+click is reserved for the z-fight raycaster (dev probe).
+  if (event.shiftKey) return;
   cancelCameraTween();
   pointerDownXY = [event.clientX, event.clientY];
   pointerDragged = false;
@@ -716,31 +718,6 @@ async function init() {
     window.__ctrl = controls;
     window.__model = model;
 
-    // Z-fight probe: shift-click a pixel to log every mesh under the cursor,
-    // sorted front-to-back. Two hits at near-equal distance (Δ in mm) are the
-    // coplanar pair that's flickering. Exposed as window.__probe(x,y) too so a
-    // headless driver can hit exact pixels.
-    const probeRay = new THREE.Raycaster();
-    window.__probe = (ndcX, ndcY) => {
-      probeRay.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
-      const hits = probeRay.intersectObject(model, true).filter((h) => h.object.visible);
-      const rows = hits.slice(0, 8).map((h, i) => {
-        const m = h.object.material;
-        const mat = Array.isArray(m) ? m.map((x) => x?.name).join(",") : m?.name;
-        const gap = i > 0 ? `Δ${((h.distance - hits[i - 1].distance) * 1000).toFixed(2)}mm` : "";
-        return { obj: h.object.name, mat, dist: +h.distance.toFixed(4), gap };
-      });
-      console.table(rows);
-      return rows;
-    };
-    renderer.domElement.addEventListener("pointerdown", (e) => {
-      if (!e.shiftKey) return;
-      const r = renderer.domElement.getBoundingClientRect();
-      window.__probe(
-        ((e.clientX - r.left) / r.width) * 2 - 1,
-        -((e.clientY - r.top) / r.height) * 2 + 1,
-      );
-    });
     const debugStack = document.createElement("div");
     debugStack.className = "debug-stack";
     viewport.appendChild(debugStack);
@@ -749,11 +726,20 @@ async function init() {
       { createSceneDebugPanel },
       { createLightDebugPanel },
       { createAudioDebugPanel },
+      { createZfightProbe },
     ] = await Promise.all([
       import("./scene-debug.js"),
       import("./light-debug.js"),
       import("./audio-debug.js"),
+      import("./zfight-probe.js"),
     ]);
+    createZfightProbe({
+      camera,
+      renderer,
+      scene,
+      getModel: () => modelRoot,
+      mount: debugStack,
+    });
     // Bottom → top in the stack: Tone, Lights, Debug (see .debug-stack flex).
     createAudioDebugPanel({ audio, mount: debugStack });
     lightDebug = createLightDebugPanel({
