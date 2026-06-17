@@ -17,7 +17,7 @@ const DEFAULTS = {
 
 // Seconds for a full open or close. The lid moves on a time-based eased tween
 // (not exponential smoothing) so it glides at a stately, even pace.
-const LID_ANIM_DURATION = 2.3;
+const LID_ANIM_DURATION = 4.2;
 
 // Phased open/close so the prop clears the lid instead of clipping through it.
 // Closing (lidOpen 1 -> 0): the lid first lifts slightly past its open angle to
