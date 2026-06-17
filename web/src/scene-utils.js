@@ -480,8 +480,14 @@ function meshMatchesMaterial(mesh, re) {
   return mats.some((m) => m && re.test(m.name || ""));
 }
 
+// Overlay duplicate shells are thin (≈0.5–4 mm). Larger Y steps are real crown/profile.
+const OVERLAY_GAP_MIN_M = 0.0005;
+const OVERLAY_GAP_MAX_M = 0.004;
+const OVERLAY_UPPER_MAX_FRAC = 0.2;
+
 /**
- * Drop a thin duplicate up-facing shell when the mesh has two separated Y layers.
+ * Drop a thin duplicate up-facing shell (plate lip skins only). Only removes
+ * up-facing triangles in a small upper cluster — never side walls or crown step.
  * @param {THREE.Mesh} mesh
  * @returns {number} removed triangle count
  */
@@ -500,46 +506,52 @@ function dedupeOverlayOnMesh(mesh) {
   const ac = new THREE.Vector3();
   const n = new THREE.Vector3();
 
-  const triY = [];
-  const upY = [];
+  const upTris = [];
   for (let t = 0; t < idx.count; t += 3) {
     a.fromBufferAttribute(pos, idx.getX(t)).applyMatrix4(mw);
     b.fromBufferAttribute(pos, idx.getX(t + 1)).applyMatrix4(mw);
     c.fromBufferAttribute(pos, idx.getX(t + 2)).applyMatrix4(mw);
-    const cy = (a.y + b.y + c.y) / 3;
     n.copy(ab.subVectors(b, a)).cross(ac.subVectors(c, a)).normalize();
-    triY.push(cy);
-    if (n.y > 0.7) upY.push(cy);
+    if (n.y <= 0.7) continue;
+    upTris.push({ t, cy: (a.y + b.y + c.y) / 3 });
   }
-  if (upY.length < 8) return 0;
+  if (upTris.length < 8) return 0;
 
-  upY.sort((x, y) => x - y);
-  let gap = 0;
-  let cut = Infinity;
-  for (let i = 1; i < upY.length; i++) {
-    const g = upY[i] - upY[i - 1];
-    if (g > gap) {
-      gap = g;
-      cut = (upY[i] + upY[i - 1]) / 2;
-    }
+  upTris.sort((u, v) => u.cy - v.cy);
+
+  let best = null;
+  for (let i = 1; i < upTris.length; i++) {
+    const g = upTris[i].cy - upTris[i - 1].cy;
+    if (g < OVERLAY_GAP_MIN_M || g > OVERLAY_GAP_MAX_M) continue;
+    const above = upTris.length - i;
+    if (above / upTris.length > OVERLAY_UPPER_MAX_FRAC) continue;
+    const cut = (upTris[i].cy + upTris[i - 1].cy) / 2;
+    if (!best || g < best.g) best = { g, cut };
   }
-  if (gap < 0.002) return 0;
+  if (!best) return 0;
+
+  const drop = new Set();
+  for (const { t, cy } of upTris) {
+    if (cy > best.cut) drop.add(t);
+  }
+  if (!drop.size) return 0;
 
   const keep = [];
   for (let t = 0; t < idx.count; t += 3) {
-    if (triY[t / 3] <= cut) keep.push(idx.getX(t), idx.getX(t + 1), idx.getX(t + 2));
+    if (!drop.has(t)) keep.push(idx.getX(t), idx.getX(t + 1), idx.getX(t + 2));
   }
   if (keep.length === idx.count) return 0;
   geo.setIndex(keep);
   geo.computeVertexNormals();
   geo.computeBoundingSphere();
   geo.computeBoundingBox();
-  return idx.count / 3 - keep.length / 3;
+  return drop.size;
 }
 
 /**
- * glTF loads Piano_Static as a group of per-material meshes (Cube016_3 = plate).
- * Soundboard wood and the cast plate can each carry a doubled up-facing shell.
+ * glTF loads Piano_Static as per-material child meshes. Only the cast plate may
+ * carry a thin duplicate skin; soundboard crown steps are real geometry — do not
+ * dedupe the wood mesh (a max-gap cut removed the whole crowned top).
  * @param {THREE.Object3D} root
  * @returns {number} removed triangle count
  */
@@ -548,13 +560,8 @@ export function dedupeInteriorOverlays(root) {
   if (!ps) return 0;
   let removed = 0;
   ps.traverse((o) => {
-    if (!o.isMesh) return;
-    if (
-      meshMatchesMaterial(o, SOUNDBOARD_MESH_MAT_RE) ||
-      meshMatchesMaterial(o, PLATE_MAT_RE)
-    ) {
-      removed += dedupeOverlayOnMesh(o);
-    }
+    if (!o.isMesh || !meshMatchesMaterial(o, PLATE_MAT_RE)) return;
+    removed += dedupeOverlayOnMesh(o);
   });
   return removed;
 }
