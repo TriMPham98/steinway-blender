@@ -1,0 +1,22 @@
+{
+  "source": "assets/carnegie_hall.blend",
+  "stage_top_blender_z": 0.0,
+  "stage_top_gltf_y": 0.0,
+  "bounds_blender": {
+    "min": [
+      -20.0,
+      -11.399999618530273,
+      -1.5
+    ],
+    "max": [
+      20.0,
+      28.600000381469727,
+      12.055999755859375
+    ]
+  },
+  "mesh_count": 12,
+  "vertex_count": 16528,
+  "face_count": 14270,
+  "camera_far_hint": 120,
+  "notes": "Place hall with stage top at Y=0 under the frameModel-grounded piano. Do not run frameModel/scale-to-fit on the hall root."
+}

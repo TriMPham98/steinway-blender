@@ -9,10 +9,15 @@ import { MIDI_HIGH, MIDI_LOW } from "./anim.js";
 import { backendAvailable, findDefaultPort, listInputPorts } from "./midi.js";
 
 import {
+  CAMERA_AUTHORING,
   CAMERA_PRESETS,
   KEYBOARD_RANGE_VIEW,
+  applyCameraPresetsYaw,
+  applyStageLighting,
   createContactShadow,
   createStudioGround,
+  disposeContactShadow,
+  disposeStudioGround,
   fitCameraToModel,
   frameModel,
   getHeroCameraPose,
@@ -22,6 +27,8 @@ import {
   prepHingeTrim,
   prepInteriorStack,
   HERO_CAMERA_DEFAULTS,
+  rotateYawPoint,
+  setAuditoriumBackground,
   setupEnvironment,
   setupShadows,
   createLightHelpers,
@@ -31,6 +38,12 @@ import {
   stripBenchLegs,
   stripStrayCurves,
 } from "./scene-utils.js";
+import {
+  applyHallCameraLimits,
+  loadHall,
+  placePianoOnStage,
+  prepareHall,
+} from "./hall.js";
 
 const MODEL_URL = "/models/steinway.glb";
 const MANIFEST_URL = "/models/steinway.keys.json";
@@ -94,7 +107,12 @@ controls.maxPolarAngle = Math.PI * 0.49;
 
 const { lights, lightingConfig, syncViewerLight } = setupSeatedViewerLights(scene);
 const lightHelpers = createLightHelpers(scene, lights);
-const studioFloor = createStudioGround(scene);
+/** @type {THREE.Object3D | null} */
+let studioFloor = createStudioGround(scene);
+/** @type {THREE.Object3D | null} */
+let contactShadow = null;
+/** @type {THREE.Object3D | null} */
+let hallRoot = null;
 
 let modelRoot = null;
 let heroCameraDefaults = null;
@@ -251,16 +269,16 @@ function goToViewPreset(id, duration = 1.0) {
 let viewingKeyboardRange = false;
 let focusedOctaveShift = 0;
 
-// Hand-tuned reference framing (distance / angle / height) for the home octave
-// range; the live view pans it to whatever keys are active.
-const KB_VIEW_TARGET = new THREE.Vector3(...KEYBOARD_RANGE_VIEW.target);
-const KB_VIEW_OFFSET = new THREE.Vector3(
-  KEYBOARD_RANGE_VIEW.position[0] - KEYBOARD_RANGE_VIEW.target[0],
-  KEYBOARD_RANGE_VIEW.position[1] - KEYBOARD_RANGE_VIEW.target[1],
-  KEYBOARD_RANGE_VIEW.position[2] - KEYBOARD_RANGE_VIEW.target[2],
+// Authoring-frame (keyboard +Z) offset for the keyboard-range fly-to — same
+// relative camera as before stage yaw; world pose is recovered via R_y(yaw).
+const KB_AUTH = CAMERA_AUTHORING.keyboardRange;
+const KB_AUTH_OFFSET = new THREE.Vector3(
+  KB_AUTH.position[0] - KB_AUTH.target[0],
+  KB_AUTH.position[1] - KB_AUTH.target[1],
+  KB_AUTH.position[2] - KB_AUTH.target[2],
 );
-const KB_VIEW_DIST = KB_VIEW_OFFSET.length();
-const KB_VIEW_DIR = KB_VIEW_OFFSET.clone().normalize();
+const KB_AUTH_DIST = KB_AUTH_OFFSET.length();
+const KB_AUTH_DIR = KB_AUTH_OFFSET.clone().normalize();
 
 /** Inclusive MIDI [lo, hi] of the *playable* keys (clamped to the piano). */
 function keyboardRangeNotes() {
@@ -271,52 +289,59 @@ function keyboardRangeNotes() {
   ];
 }
 
-/** Bounding-box center of the home (C4–E5) range, cached after the model loads. */
-let homeRangeCenter = null;
-function keyboardHomeCenter() {
-  if (homeRangeCenter) return homeRangeCenter;
-  const box = piano?.rangeBox(
-    KEYBOARD_BASE_NOTE,
-    KEYBOARD_BASE_NOTE + KEYBOARD_SPAN,
-  );
-  if (!box || box.isEmpty()) return null;
-  homeRangeCenter = box.getCenter(new THREE.Vector3());
-  return homeRangeCenter;
+/** @param {THREE.Vector3} v @param {number} yaw */
+function yawVec(v, yaw) {
+  const [x, y, z] = rotateYawPoint(v.x, v.y, v.z, yaw);
+  return new THREE.Vector3(x, y, z);
 }
 
-/** Camera pose framing the keys the computer keyboard plays, or null. */
+/**
+ * Camera pose framing the keys the computer keyboard plays.
+ * Uses the original keyboard-+Z framing math in the piano’s local frame, then
+ * rotates by the stage yaw — preserves approach / up without inverted axes.
+ */
 function getKeyboardRangePose() {
-  if (!piano) return null;
+  if (!piano || !modelRoot) return null;
   const [lo, hi] = keyboardRangeNotes();
   const box = piano.rangeBox(lo, hi);
   if (!box || box.isEmpty()) return null;
-  const home = keyboardHomeCenter();
-  if (!home) return null;
+  const homeBox = piano.rangeBox(
+    KEYBOARD_BASE_NOTE,
+    KEYBOARD_BASE_NOTE + KEYBOARD_SPAN,
+  );
+  if (!homeBox || homeBox.isEmpty()) return null;
 
-  const center = box.getCenter(new THREE.Vector3());
-  const size = box.getSize(new THREE.Vector3());
+  const yaw = modelRoot.rotation.y;
+  const centerW = box.getCenter(new THREE.Vector3());
+  const homeW = homeBox.getCenter(new THREE.Vector3());
+  // Un-yaw into the hand-tuned keyboard-+Z frame.
+  const center = yawVec(centerW, -yaw);
+  const home = yawVec(homeW, -yaw);
+  const sizeW = box.getSize(new THREE.Vector3());
 
-  // Height/depth/distance/angle from the hand-tuned reference; lateral position
-  // centered on the active keys so every octave is balanced in frame.
-  const target = new THREE.Vector3(
+  // Original product formula: pan along keyboard (local X), keep ref height/depth.
+  const targetLocal = new THREE.Vector3(
     center.x,
-    KB_VIEW_TARGET.y + (center.y - home.y),
-    KB_VIEW_TARGET.z + (center.z - home.z),
+    KB_AUTH.target[1] + (center.y - home.y),
+    KB_AUTH.target[2] + (center.z - home.z),
   );
 
-  // Hold the reference distance, but pull back if a narrow viewport can't fit
-  // the ~17-key span at that distance.
-  const vHalf = THREE.MathUtils.degToRad(KEYBOARD_RANGE_VIEW.fov) / 2;
+  const vHalf = THREE.MathUtils.degToRad(KB_AUTH.fov) / 2;
   const hHalf = Math.atan(Math.tan(vHalf) * Math.max(camera.aspect, 0.0001));
-  const fitDist = ((Math.max(size.x, 0.12) * 0.5) / Math.tan(hHalf)) * 1.05;
-  const dist = Math.max(KB_VIEW_DIST, fitDist);
+  // After world yaw the AABB swaps X/Z; local key span was along X ≈ max world span.
+  const keySpan = Math.max(sizeW.x, sizeW.z, 0.12);
+  const fitDist = ((keySpan * 0.5) / Math.tan(hHalf)) * 1.05;
+  const dist = Math.max(KB_AUTH_DIST, fitDist);
 
-  const position = target.clone().addScaledVector(KB_VIEW_DIR, dist);
+  const posLocal = targetLocal.clone().addScaledVector(KB_AUTH_DIR, dist);
+  const target = yawVec(targetLocal, yaw);
+  const position = yawVec(posLocal, yaw);
+
   return {
     position: [position.x, position.y, position.z],
     target: [target.x, target.y, target.z],
-    fov: KEYBOARD_RANGE_VIEW.fov,
-    exposure: KEYBOARD_RANGE_VIEW.exposure,
+    fov: KB_AUTH.fov,
+    exposure: KB_AUTH.exposure ?? HERO_CAMERA_DEFAULTS.exposure,
   };
 }
 
@@ -674,7 +699,9 @@ function onPointerUp(event) {
 
 async function init() {
   setStatus("Loading model…");
-  const [gltf, manifest] = await Promise.all([
+  // Hall loads in parallel with the piano; missing hall is a soft fallback to
+  // the studio floor (see loadHall).
+  const [gltf, manifest, hallPack] = await Promise.all([
     new Promise((resolve, reject) => {
       loader.load(MODEL_URL, resolve, (xhr) => {
         if (xhr.total) {
@@ -683,6 +710,7 @@ async function init() {
       }, reject);
     }),
     loadManifest(),
+    loadHall(loader),
   ]);
 
   const model = gltf.scene;
@@ -701,9 +729,39 @@ async function init() {
   prepHingeTrim(model);
   prepInteriorStack(model);
   setupShadows(model);
-  createContactShadow(scene, model);
+
+  if (hallPack) {
+    hallRoot = prepareHall(hallPack.root, hallPack.meta);
+    // Hall under the piano so the instrument always draws on top in equal depth.
+    scene.add(hallRoot);
+    // Three.js stage placement only — yaw keyboard to stage right from hall axes.
+    const placed = placePianoOnStage(model, hallRoot);
+    // Rotate the original product cameras by the same yaw (keeps relative framing).
+    applyCameraPresetsYaw(placed.yaw);
+    console.info(
+      `[hall] piano on stage (yaw ${((placed.yaw * 180) / Math.PI).toFixed(1)}°, keyboard → stage right)`,
+    );
+    disposeStudioGround(studioFloor);
+    studioFloor = null;
+    setAuditoriumBackground(scene);
+    applyStageLighting(lights);
+    applyHallCameraLimits(camera, controls, hallPack.meta);
+    // Stage mesh receives real shadows — no soft blob needed.
+    contactShadow = null;
+    console.info("[hall] Carnegie set ready");
+  } else {
+    contactShadow = createContactShadow(scene, model);
+  }
+
   const pose = fitCameraToModel(camera, controls, model);
-  renderer.toneMappingExposure = pose.exposure;
+  if (hallPack) {
+    // fitCameraToModel may clamp far for the piano radius; re-apply hall limits.
+    applyHallCameraLimits(camera, controls, hallPack.meta);
+    // Slightly lower exposure once house emissives + stage key stack with ACES.
+    renderer.toneMappingExposure = Math.min(pose.exposure, 1.55);
+  } else {
+    renderer.toneMappingExposure = pose.exposure;
+  }
   syncViewerLight(pose.viewerLightPosition);
 
   heroCameraDefaults = {
@@ -930,8 +988,10 @@ function onResize() {
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   renderer.setSize(w, h);
-  const dpr = Math.min(window.devicePixelRatio, 2);
-  studioFloor.getRenderTarget().setSize(w * dpr, h * dpr);
+  if (studioFloor?.getRenderTarget) {
+    const dpr = Math.min(window.devicePixelRatio, 2);
+    studioFloor.getRenderTarget().setSize(w * dpr, h * dpr);
+  }
 }
 window.addEventListener("resize", onResize);
 

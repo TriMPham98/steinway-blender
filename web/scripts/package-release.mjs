@@ -25,6 +25,19 @@ if (!fs.existsSync(path.join(modelsSrc, "steinway.glb"))) {
   );
   process.exit(1);
 }
+if (!fs.existsSync(path.join(modelsSrc, "carnegie_hall.glb"))) {
+  console.warn(
+    "[package] missing public/models/carnegie_hall.glb — studio floor fallback in viewer.\n" +
+      "  Blender --background assets/carnegie_hall.blend --python scripts/export_carnegie_glb.py",
+  );
+}
+const envHdr = path.join(webRoot, "public", "env", "carnegie.hdr");
+if (!fs.existsSync(envHdr)) {
+  console.warn(
+    "[package] missing public/env/carnegie.hdr — synthetic IBL fallback.\n" +
+      "  Blender --background assets/carnegie_hall.blend --python scripts/render_carnegie_hdri.py",
+  );
+}
 
 fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
@@ -50,6 +63,7 @@ Static site — same live MIDI behavior as the Blender add-on (v0.4.2):
 - Velocity-sensitive keys (spring-damper, full press depth)
 - Sustain pedal CC64 (pedal mesh only; keys are not held by sustain)
 - Press angle, snappiness, velocity sensitivity
+- Carnegie Hall 3D set (stage / seats / dome) + baked HDRI reflections
 
 ## Host anywhere
 

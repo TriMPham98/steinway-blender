@@ -1,5 +1,16 @@
 import * as THREE from "three";
 import { Reflector } from "three/examples/jsm/objects/Reflector.js";
+import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
+
+/** Baked equirectangular HDRI of the Carnegie Hall set (scripts/render_carnegie_hdri.py). */
+const CARNEGIE_HDRI_URL = "/env/carnegie.hdr";
+// The hall HDRI carries real stage-light energy — far brighter than the dark
+// synthetic probe the per-material envMapIntensity values were tuned against.
+// Scale the whole environment down so the black lacquer stays black and only
+// picks up hall reflections, instead of being relit gold. Tune to taste.
+// (baked HDRI mean luminance ~1.37, max ~24.6 — bright stage lighting; this
+// scale lands the effective irradiance near the old neutral probe's level.)
+const CARNEGIE_ENV_INTENSITY = 0.1;
 
 /**
  * Center model on ground and scale to a reasonable size for the viewer.
@@ -35,12 +46,49 @@ export function frameModel(root) {
   };
 }
 
-/** Default hero (¾ product) view — tuned in scene debug. */
+/**
+ * Hand-tuned camera poses for the export layout (keyboard faces +Z).
+ * When the piano is yawed on stage, call {@link applyCameraPresetsYaw} with the
+ * same yaw so every preset keeps its original relative orientation — only the
+ * world axes change.
+ */
+export const CAMERA_AUTHORING = Object.freeze({
+  hero: {
+    position: /** @type {[number, number, number]} */ ([2.39, 1.38, 2.37]),
+    target: /** @type {[number, number, number]} */ ([0, 0.74, 0.35]),
+    fov: 44,
+    exposure: 1.86,
+  },
+  front: {
+    position: /** @type {[number, number, number]} */ ([0.02, 1.19, 3.08]),
+    target: /** @type {[number, number, number]} */ ([0.01, 0.75, 0.03]),
+    fov: 42,
+  },
+  top: {
+    position: /** @type {[number, number, number]} */ ([0, 3.0, 1.3]),
+    target: /** @type {[number, number, number]} */ ([0, 0.7, 0]),
+    fov: 46,
+  },
+  seated: {
+    position: /** @type {[number, number, number]} */ ([0.02, 1.58, 1.85]),
+    target: /** @type {[number, number, number]} */ ([0.01, 0.75, 0.74]),
+    fov: 42,
+    exposure: 1.86,
+  },
+  keyboardRange: {
+    position: /** @type {[number, number, number]} */ ([0.06, 1.1, 1.22]),
+    target: /** @type {[number, number, number]} */ ([0.06, 0.75, 0.77]),
+    fov: 40,
+    exposure: 1.86,
+  },
+});
+
+/** Live hero defaults (mutated by {@link applyCameraPresetsYaw}). */
 export const HERO_CAMERA_DEFAULTS = {
-  position: [2.39, 1.38, 2.37],
-  target: [0, 0.74, 0.35],
-  fov: 44,
-  exposure: 1.86,
+  position: [...CAMERA_AUTHORING.hero.position],
+  target: [...CAMERA_AUTHORING.hero.target],
+  fov: CAMERA_AUTHORING.hero.fov,
+  exposure: CAMERA_AUTHORING.hero.exposure,
 };
 
 /** Default scene lighting (tuned in scene debug). */
@@ -72,44 +120,87 @@ export const LIGHTING_DEFAULTS = {
   keySpotCamZAdd: 0.35,
 };
 
-/** Snap-to preset views for the viewer. Tune positions by eye if framing drifts. */
+/** Snap-to preset views (mutated by {@link applyCameraPresetsYaw}). */
 export const CAMERA_PRESETS = {
   hero: {
-    position: [...HERO_CAMERA_DEFAULTS.position],
-    target: [...HERO_CAMERA_DEFAULTS.target],
-    fov: HERO_CAMERA_DEFAULTS.fov,
+    position: [...CAMERA_AUTHORING.hero.position],
+    target: [...CAMERA_AUTHORING.hero.target],
+    fov: CAMERA_AUTHORING.hero.fov,
   },
   front: {
-    position: [0.02, 1.19, 3.08],
-    target: [0.01, 0.75, 0.03],
-    fov: 42,
+    position: [...CAMERA_AUTHORING.front.position],
+    target: [...CAMERA_AUTHORING.front.target],
+    fov: CAMERA_AUTHORING.front.fov,
   },
   top: {
-    position: [0, 3.0, 1.3],
-    target: [0, 0.7, 0],
-    fov: 46,
+    position: [...CAMERA_AUTHORING.top.position],
+    target: [...CAMERA_AUTHORING.top.target],
+    fov: CAMERA_AUTHORING.top.fov,
   },
   /** Player-at-keyboard view — used when live MIDI session starts. */
   seated: {
-    position: [0.02, 1.58, 1.85],
-    target: [0.01, 0.75, 0.74],
-    fov: 42,
-    exposure: 1.86,
+    position: [...CAMERA_AUTHORING.seated.position],
+    target: [...CAMERA_AUTHORING.seated.target],
+    fov: CAMERA_AUTHORING.seated.fov,
+    exposure: CAMERA_AUTHORING.seated.exposure,
   },
 };
 
 /**
- * Reference framing for the computer-keyboard octave range (no-MIDI mode),
- * hand-tuned in the scene-debug panel for the home range (C4–E5). The live view
- * keeps this distance/angle/height and pans to the active octave's keys, so the
- * framing stays consistent across octave shifts.
+ * Reference framing for the computer-keyboard octave range (no-MIDI mode).
+ * Authoring pose is keyboard-+Z; live values track {@link applyCameraPresetsYaw}.
  */
 export const KEYBOARD_RANGE_VIEW = {
-  position: [0.06, 1.1, 1.22],
-  target: [0.06, 0.75, 0.77],
-  fov: 40,
-  exposure: 1.86,
+  position: [...CAMERA_AUTHORING.keyboardRange.position],
+  target: [...CAMERA_AUTHORING.keyboardRange.target],
+  fov: CAMERA_AUTHORING.keyboardRange.fov,
+  exposure: CAMERA_AUTHORING.keyboardRange.exposure,
 };
+
+/**
+ * Rotate a point by yaw around world Y (right-hand).
+ * R_y(yaw)·(x,y,z) = (c·x + s·z, y, −s·x + c·z)
+ * @param {number} x @param {number} y @param {number} z @param {number} yaw
+ * @returns {[number, number, number]}
+ */
+export function rotateYawPoint(x, y, z, yaw) {
+  const c = Math.cos(yaw);
+  const s = Math.sin(yaw);
+  return [c * x + s * z, y, -s * x + c * z];
+}
+
+/**
+ * Apply the piano’s stage yaw to every hand-tuned camera pose so relative
+ * framing matches the pre-rotation product shot (no flipped approach axis).
+ * @param {number} yaw  same value as modelRoot.rotation.y after placePianoOnStage
+ */
+export function applyCameraPresetsYaw(yaw) {
+  const copy = (src) => ({
+    position: rotateYawPoint(src.position[0], src.position[1], src.position[2], yaw),
+    target: rotateYawPoint(src.target[0], src.target[1], src.target[2], yaw),
+    fov: src.fov,
+    exposure: src.exposure,
+  });
+
+  for (const id of /** @type {const} */ (["hero", "front", "top", "seated"])) {
+    const next = copy(CAMERA_AUTHORING[id]);
+    CAMERA_PRESETS[id].position = next.position;
+    CAMERA_PRESETS[id].target = next.target;
+    CAMERA_PRESETS[id].fov = next.fov;
+    if (next.exposure != null) CAMERA_PRESETS[id].exposure = next.exposure;
+  }
+
+  HERO_CAMERA_DEFAULTS.position = [...CAMERA_PRESETS.hero.position];
+  HERO_CAMERA_DEFAULTS.target = [...CAMERA_PRESETS.hero.target];
+  HERO_CAMERA_DEFAULTS.fov = CAMERA_PRESETS.hero.fov;
+  HERO_CAMERA_DEFAULTS.exposure = CAMERA_AUTHORING.hero.exposure;
+
+  const kb = copy(CAMERA_AUTHORING.keyboardRange);
+  KEYBOARD_RANGE_VIEW.position = kb.position;
+  KEYBOARD_RANGE_VIEW.target = kb.target;
+  KEYBOARD_RANGE_VIEW.fov = kb.fov;
+  KEYBOARD_RANGE_VIEW.exposure = kb.exposure;
+}
 
 /** Hero (¾ product) view — fixed pose after frameModel centers the piano. */
 export function getHeroCameraPose(root) {
@@ -312,11 +403,38 @@ export function prepHingeTrim(root) {
 }
 
 /** Tune exported metals (color/roughness); depth is left to the geometry + log buffer. */
-function tuneMetal(mat, fallbackColor, fallbackRough, { doubleSided = true } = {}) {
+function tuneMetal(
+  mat,
+  fallbackColor,
+  fallbackRough,
+  { doubleSided = true, anisotropy = 0, anisotropyRotation = 0 } = {},
+) {
+  // glTF metallic-roughness loads as MeshStandardMaterial, which has no
+  // anisotropy channel. Upgrade the cast plate/gold to MeshPhysicalMaterial so
+  // its brushed grain can stretch the reflection. Carry the normal map across;
+  // tuneMetal sets every other field explicitly below.
+  if (anisotropy > 0 && !mat.isMeshPhysicalMaterial) {
+    const phys = new THREE.MeshPhysicalMaterial();
+    phys.name = mat.name;
+    phys.map = mat.map;
+    phys.roughnessMap = mat.roughnessMap;
+    phys.metalnessMap = mat.metalnessMap;
+    phys.normalMap = mat.normalMap;
+    if (mat.normalMap) phys.normalScale.copy(mat.normalScale);
+    mat = phys;
+  }
   prepMaps(mat);
   mat.metalness = 1.0;
   mat.roughness = fallbackRough;
   mat.envMapIntensity = 1.28;
+  // Gilded cast-iron plates carry a faint brushed radial grain. A little
+  // anisotropy stretches the env reflection along the grain so the gold reads
+  // as cast metal rather than a chrome mirror. UV-derived tangents drive the
+  // direction; anisotropyRotation orients it (0 = along U).
+  if (anisotropy > 0) {
+    mat.anisotropy = anisotropy;
+    mat.anisotropyRotation = anisotropyRotation;
+  }
   if (mat.normalMap) mat.normalScale.set(1.1, 1.1);
   // Thin trim (hinge leaves, rim gold) needs DoubleSide; solid harp plate/rim and
   // pin hardware are closed volumes — DoubleSide draws the back face at the same
@@ -792,9 +910,15 @@ export function refineMaterials(root) {
     } else if (/^sy_/i.test(name)) {
       next = lacquerFromExport(mat, { matte: /matte/i.test(name), lite: false });
     } else if (/gold/i.test(name)) {
-      next = tuneMetal(mat, 0xd4af37, 0.24);
+      next = tuneMetal(mat, 0xd4af37, 0.24, { anisotropy: 0.45 });
     } else if (/brass/i.test(name)) {
-      next = tuneMetal(mat, 0xc6a456, 0.2, { doubleSided: !/Rim|Plate/i.test(name) });
+      // The cast plate (0T_Brass_mqm_Plate) and gold rim get a brushed grain;
+      // small fittings stay isotropic (thin trim, no meaningful UV grain).
+      const isPlate = /Rim|Plate/i.test(name);
+      next = tuneMetal(mat, 0xc6a456, 0.2, {
+        doubleSided: !isPlate,
+        anisotropy: isPlate ? 0.5 : 0,
+      });
     } else if (/copper/i.test(name)) {
       next = tuneMetal(mat, 0xb87333, 0.28);
     } else if (/steel|chrome|metal/i.test(name)) {
@@ -893,12 +1017,115 @@ function roomEnvironment(pmrem) {
 /** Light room backdrop + IBL (seated viewing context). */
 export function setupEnvironment(renderer, scene) {
   const pmrem = new THREE.PMREMGenerator(renderer);
-  scene.environment = roomEnvironment(pmrem);
+  // Synthetic softbox probe drives reflections from frame one; the baked
+  // Carnegie HDRI replaces it asynchronously below (and stays as the fallback
+  // if the asset is missing — e.g. a build that skipped the Blender bake).
+  const fallback = roomEnvironment(pmrem);
+  scene.environment = fallback;
   scene.background = radialBackground("#c9c6bf", "#9a9ca2", "#33363d");
   // Fog was flattening surface detail — keep backdrop gradient only.
   scene.fog = null;
-  pmrem.dispose();
+
+  new RGBELoader().load(
+    CARNEGIE_HDRI_URL,
+    (hdr) => {
+      hdr.mapping = THREE.EquirectangularReflectionMapping;
+      const envMap = pmrem.fromEquirectangular(hdr).texture;
+      hdr.dispose();
+      fallback.dispose();
+      scene.environment = envMap;
+      scene.environmentIntensity = CARNEGIE_ENV_INTENSITY;
+      pmrem.dispose();
+    },
+    undefined,
+    () => {
+      // Missing/failed HDRI: keep the synthetic probe, free the generator.
+      pmrem.dispose();
+    },
+  );
   return scene.environment;
+}
+
+/**
+ * Dark auditorium void once the 3D Carnegie set is in the scene (replaces the
+ * bright showroom cyclorama so the house reads as a real room edge).
+ * @param {THREE.Scene} scene
+ */
+export function setAuditoriumBackground(scene) {
+  scene.background = radialBackground("#2a2620", "#1a1814", "#0a0908");
+}
+
+/**
+ * Stage-oriented rebalance of the seated light rig once the hall mesh is live.
+ * Dims ambient wash so plaster walls stay dark; keeps a warm stage key and a
+ * soft house fill so the piano remains readable.
+ * @param {ReturnType<typeof setupSeatedViewerLights>["lights"]} lights
+ */
+export function applyStageLighting(lights) {
+  // House is dark; piano is lit by stage key + modest fill.
+  lights.ambient.intensity = 0.28;
+  lights.ambient.color.set(0xf0e8dc);
+  lights.hemi.intensity = 0.38;
+  lights.hemi.color.set(0xfff2e0);
+  lights.hemi.groundColor.set(0x3a3028);
+
+  // Stage key from above, slightly house-side (+Z) and stage-right of center.
+  lights.ceiling.intensity = 1.55;
+  lights.ceiling.color.set(0xfff0dc);
+  lights.ceiling.position.set(-1.5, 6.5, 2.0);
+  // Wider ortho frustum so the lid casts onto the full stage, not just the body.
+  const sc = lights.ceiling.shadow.camera;
+  sc.left = -4;
+  sc.right = 4;
+  sc.top = 4;
+  sc.bottom = -4;
+  sc.far = 18;
+  sc.updateProjectionMatrix();
+
+  // House fill from the auditorium (+Z).
+  lights.room.intensity = 0.42;
+  lights.room.color.set(0xe8d8c0);
+  lights.room.position.set(0, 5, 10);
+
+  // Seated player lamp — still useful for key tops, slightly softer.
+  lights.viewerLight.intensity = 4.2;
+  lights.viewerLight.color.set(0xfff0dc);
+  lights.viewerLight.distance = 16;
+
+  lights.keySpot.intensity = 2.2;
+  lights.keySpot.color.set(0xfff8f0);
+}
+
+/**
+ * Remove the showroom Reflector floor (and dispose GPU resources).
+ * @param {THREE.Object3D | null | undefined} floor
+ */
+export function disposeStudioGround(floor) {
+  if (!floor) return;
+  floor.parent?.remove(floor);
+  floor.geometry?.dispose?.();
+  const mat = floor.material;
+  if (mat) {
+    mat.map?.dispose?.();
+    mat.dispose?.();
+  }
+  // Reflector keeps an internal render target.
+  floor.getRenderTarget?.()?.dispose?.();
+}
+
+/**
+ * Remove the soft contact-shadow blob once the stage mesh receives real shadows.
+ * @param {THREE.Object3D | null | undefined} shadow
+ */
+export function disposeContactShadow(shadow) {
+  if (!shadow) return;
+  shadow.parent?.remove(shadow);
+  shadow.geometry?.dispose?.();
+  const mat = shadow.material;
+  if (mat) {
+    mat.map?.dispose?.();
+    mat.dispose?.();
+  }
 }
 
 /**
@@ -940,7 +1167,25 @@ export function setupSeatedViewerLights(scene) {
 
   const ceiling = new THREE.DirectionalLight(0xfffaf5, d.ceilingIntensity);
   ceiling.position.set(...d.ceilingPosition);
+  // Overhead key light casts the real cast shadow: the raised lid onto the
+  // soundboard, struck keys onto the keybed. Tight ortho frustum around the
+  // ~1.5 x 1.8 m Model O footprint so the 2k map stays crisp. normalBias clears
+  // the soundboard/keytop self-shadow acne without detaching the contact line.
+  ceiling.castShadow = true;
+  ceiling.shadow.mapSize.set(2048, 2048);
+  const sc = ceiling.shadow.camera;
+  sc.left = -1.4;
+  sc.right = 1.4;
+  sc.top = 1.6;
+  sc.bottom = -1.6;
+  sc.near = 0.5;
+  sc.far = 9;
+  sc.updateProjectionMatrix();
+  ceiling.shadow.bias = -0.0003;
+  ceiling.shadow.normalBias = 0.02;
   scene.add(ceiling);
+  // DirectionalLight aims at its target (default origin); the piano sits at
+  // origin, so no target move is needed.
 
   const room = new THREE.DirectionalLight(0xefece6, d.roomIntensity);
   room.position.set(...d.roomPosition);

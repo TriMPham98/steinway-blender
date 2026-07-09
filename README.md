@@ -107,6 +107,23 @@ bash scripts/build_wheel.sh                                  # (re)build the pyt
 > `assets/*.blend` is git-ignored — the ~103 MB source model and the baked playable
 > file stay local and are never committed.
 
+## Web viewer — Carnegie Hall environment
+
+The browser app sits the grand on a low-poly **Carnegie Hall** set (stage,
+proscenium, seats, dome) with a baked HDRI for lacquer/gold reflections.
+
+```bash
+B=/Applications/Blender.app/Contents/MacOS/Blender
+# Visible hall geometry → web/public/models/carnegie_hall.glb (+ .meta.json)
+$B --background assets/carnegie_hall.blend --python scripts/export_carnegie_glb.py
+# Reflection probe (scene-linear equirect) → web/public/env/carnegie.hdr
+$B --background assets/carnegie_hall.blend --python scripts/render_carnegie_hdri.py
+cd web && npm run dev
+```
+
+Ship **GLB + HDR** under `web/public/`; keep the `.blend` local. If the hall GLB
+is missing, the viewer falls back to the studio glass floor.
+
 ## Scope / roadmap
 
 v0.7 drives **velocity-sensitive keys, the full double-escapement hammer
