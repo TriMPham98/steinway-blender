@@ -14,6 +14,13 @@ import { Reverb, SplendidGrandPiano } from "smplr";
 
 const DEFAULT_VELOCITY = 90;
 
+/**
+ * Damper release time (seconds) for smplr's ampRelease / decayTime.
+ * Short felt-damper seat with a little body ring after key-up — long enough
+ * to avoid a hard cut, short enough that released notes don't wash together.
+ */
+const DAMPER_RELEASE_SEC = 0.425;
+
 // Warm-grand voicing knobs (Bösendorfer-leaning, less bright/Yamaha). The
 // SplendidGrandPiano samples are fairly bright, so we voice them darker:
 // add weight, notch out the hammer-attack bite, roll off the top, and sit the
@@ -126,6 +133,8 @@ export class PianoAudio {
     this.piano = SplendidGrandPiano(this.context, {
       volume: this.sampleVolume,
       destination: this._toneChain.input,
+      // Maps to ampRelease: key-up / damper-down fade (not sustain-pedal hold).
+      decayTime: DAMPER_RELEASE_SEC,
     });
     this.applyTone();
     this.onLoading?.();
