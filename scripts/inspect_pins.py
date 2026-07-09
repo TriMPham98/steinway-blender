@@ -36,7 +36,7 @@ def _pin_surface(bvh, px, py):
         if WEB_Z[0] <= z <= WEB_Z[1]:
             return z, hits
         raised = z
-            origin = Vector((px, py, hit[0].z - 0.002))
+        origin = Vector((px, py, hit[0].z - 0.002))
     return (raised if raised is not None else 0.878), hits
 
 

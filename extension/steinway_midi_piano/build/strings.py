@@ -54,6 +54,14 @@ PIN_R = 0.0032           # tuning pin radius (build/harp.py builds the pins)
 RANKS = 4                # pin ranks (rows parallel to the strike line)
 RANK_REL0 = -0.030       # first rank: this far in front of the strike line
 RANK_PITCH = 0.025       # rank-to-rank spacing (flat web ends near -0.130)
+# Raised plate struts (top ~0.916) cross the pin field; pins that land on or
+# beside them must slide along the rank onto clear web rather than bury into
+# the brass. Clearance is probed at mid-strut height with a small margin.
+PIN_CLEAR_Z = 0.890
+# Cover the pin head (harp builds it at PIN_R + 0.0006) plus a small gap.
+PIN_CLEAR_MARGIN = 0.0012
+PIN_NUDGE_MAX = 0.015    # max slide along the rank (metres)
+WEB_Z = (0.868, 0.882)   # flat pin-field top (matches build/harp.py)
 
 
 def _section_of(note):
@@ -262,6 +270,88 @@ def _on_rank(front, dirxy, a, b, rank):
     return front - dirxy * t
 
 
+def _pin_side_clear(bvh, cx, cy):
+    """Min plan distance from (cx, cy) to plate mesh at mid-strut height.
+
+    Returns ``(distance, outward_dir_or_None)``. Distance is huge when no plate
+    is within the probe radius (open web).
+    """
+    if bvh is None:
+        return 1.0, None
+    origin = Vector((cx, cy, PIN_CLEAR_Z))
+    best_d, best_n = 1.0, None
+    for k in range(32):
+        ang = 2.0 * math.pi * k / 32.0
+        d = Vector((math.cos(ang), math.sin(ang), 0.0))
+        hit = bvh.ray_cast(origin, d, 0.025)
+        if hit[0] is None:
+            continue
+        dist = (hit[0] - origin).length
+        if dist < best_d:
+            best_d, best_n = dist, d
+    return best_d, best_n
+
+
+def _pin_footprint_on_web(bvh, cx, cy, r=PIN_R):
+    """True when the pin's full footprint rests on the flat pin-field web.
+
+    Raised strut tops (~0.916) fail this, so a pin is never left sitting under
+    brass that its shaft would have to pierce.
+    """
+    if bvh is None:
+        return True
+    down = Vector((0.0, 0.0, -1.0))
+    pts = [(cx, cy)]
+    for k in range(8):
+        ang = 2.0 * math.pi * k / 8.0
+        pts.append((cx + r * math.cos(ang), cy + r * math.sin(ang)))
+    for x, y in pts:
+        hit = bvh.ray_cast(Vector((x, y, 0.95)), down, 0.15)
+        if hit[0] is None or not (WEB_Z[0] <= hit[0].z <= WEB_Z[1]):
+            return False
+    return True
+
+
+def _nudge_pin_off_struts(bvh, pin, dirxy, rank_dir):
+    """Slide ``pin`` along the rank so its cylinder clears raised plate struts.
+
+    The lattice is kept (same rank line); only a few pins next to plate bars
+    need a millimetre-scale shift. The harp seats the cylinder at
+    ``pin - dirxy * PIN_R`` (string wraps the pin's side), so clearance is
+    tested there.
+    """
+    if bvh is None:
+        return pin
+    need = PIN_R + PIN_CLEAR_MARGIN
+
+    def cyl_xy(p):
+        c = p - dirxy * PIN_R
+        return c.x, c.y
+
+    def ok(p):
+        x, y = cyl_xy(p)
+        return (_pin_side_clear(bvh, x, y)[0] >= need
+                and _pin_footprint_on_web(bvh, x, y))
+
+    if ok(pin):
+        return pin
+
+    x0, y0 = cyl_xy(pin)
+    _cl, hit_dir = _pin_side_clear(bvh, x0, y0)
+    # Move away from the nearest plate: hit_dir points from pin toward brass.
+    prefer = 1
+    if hit_dir is not None and rank_dir.dot(hit_dir) > 0:
+        prefer = -1
+
+    max_steps = int(round(PIN_NUDGE_MAX * 1000))
+    for step_mm in range(1, max_steps + 1):
+        for sign in (prefer, -prefer):
+            cand = pin + rank_dir * (0.001 * step_mm * sign)
+            if ok(cand):
+                return cand
+    return pin
+
+
 def course_lines():
     """Per-note course geometry, shared by strings, pins, and the damper action.
 
@@ -270,10 +360,17 @@ def course_lines():
     per physical string, with the front end running to its tuning-pin position
     on one of ``RANKS`` straight pin rows over the plate's pin field.
     """
+    # Plate bay/lip cut first so pin-clearance probes see the open pin field
+    # (not the pre-cut damper-lip overlay). Idempotent via harp.CAPO_MARK.
+    from . import harp as harp_mod
+    harp_mod._cut_plate_bays()
+
     keys = action_mod._keys_sorted()
     meas = action_mod._measure(keys)
     plan = action_mod._plan(keys, meas)
     a, b = plan["line"]
+    rank_dir = Vector((1.0, b, 0.0)).normalized()
+    bvh = _plate_bvh()
 
     bass, main = _string_samples()
     bass_anchors = [_anchor_x(F, R, a, b)[0] for F, R in bass]
@@ -297,9 +394,9 @@ def course_lines():
         # cycles pin-to-pin, which draws the diagonal lattice of a real pin
         # field - and is what clears 6.4 mm pins between courses that run as
         # little as ~9 mm apart: same-rank pins only recur RANKS pins along,
-        # never closer than a course gap. No per-pin dodging (it broke that
-        # guarantee); the handful of spots over a raised bar stand ON the bar
-        # (build/harp.py probes the surface under every pin).
+        # never closer than a course gap. Pins that still land on/against a
+        # raised plate strut slide a few millimetres along the rank onto
+        # clear web (see _nudge_pin_off_struts).
         d = (R - F)
         dirxy = Vector((d.x, d.y, 0.0)).normalized()
         perp = Vector((-d.y, d.x, 0.0)).normalized()
@@ -311,6 +408,7 @@ def course_lines():
             # spatial (left-to-right) order or same-rank pins land a course
             # gap MINUS a unison spread apart instead of plus.
             pin = _on_rank(F + off, dirxy, a, b, (pin_i + m - 1 - k) % RANKS)
+            pin = _nudge_pin_off_struts(bvh, pin, dirxy, rank_dir)
             unisons.append((pin, R + off))
         pin_i += m
         courses.append({"note": note, "F": F, "R": R, "r": r, "sec": sec,
