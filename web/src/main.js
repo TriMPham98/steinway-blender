@@ -297,8 +297,11 @@ function yawVec(v, yaw) {
 
 /**
  * Camera pose framing the keys the computer keyboard plays.
- * Uses the original keyboard-+Z framing math in the piano’s local frame, then
- * rotates by the stage yaw — preserves approach / up without inverted axes.
+ *
+ * Centers on the live active-range key bounds (so octave shifts stay framed),
+ * and places the eye using the original keyboard-+Z offset rotated by the same
+ * stage yaw as the piano — relative framing matches the product shot without
+ * baking absolute world coords that drift after rotation.
  */
 function getKeyboardRangePose() {
   if (!piano || !modelRoot) return null;
@@ -311,31 +314,30 @@ function getKeyboardRangePose() {
   );
   if (!homeBox || homeBox.isEmpty()) return null;
 
+  const center = box.getCenter(new THREE.Vector3());
+  const home = homeBox.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
   const yaw = modelRoot.rotation.y;
-  const centerW = box.getCenter(new THREE.Vector3());
-  const homeW = homeBox.getCenter(new THREE.Vector3());
-  // Un-yaw into the hand-tuned keyboard-+Z frame.
-  const center = yawVec(centerW, -yaw);
-  const home = yawVec(homeW, -yaw);
-  const sizeW = box.getSize(new THREE.Vector3());
 
-  // Original product formula: pan along keyboard (local X), keep ref height/depth.
-  const targetLocal = new THREE.Vector3(
+  // Look-at: middle of the playable keys. Keep the hand-tuned height bias from
+  // the original formula (auth.y + center.y − home.y).
+  const target = new THREE.Vector3(
     center.x,
     KB_AUTH.target[1] + (center.y - home.y),
-    KB_AUTH.target[2] + (center.z - home.z),
+    center.z,
   );
 
+  // Fit distance for the ~17-key span (long axis of the row after any yaw).
+  const keySpan = Math.max(size.x, size.z, 0.12);
   const vHalf = THREE.MathUtils.degToRad(KB_AUTH.fov) / 2;
   const hHalf = Math.atan(Math.tan(vHalf) * Math.max(camera.aspect, 0.0001));
-  // After world yaw the AABB swaps X/Z; local key span was along X ≈ max world span.
-  const keySpan = Math.max(sizeW.x, sizeW.z, 0.12);
   const fitDist = ((keySpan * 0.5) / Math.tan(hHalf)) * 1.05;
   const dist = Math.max(KB_AUTH_DIST, fitDist);
 
-  const posLocal = targetLocal.clone().addScaledVector(KB_AUTH_DIR, dist);
-  const target = yawVec(targetLocal, yaw);
-  const position = yawVec(posLocal, yaw);
+  // Authoring offset was mostly +Z (player side) with a little +Y. Rotate that
+  // direction by the piano yaw so we still approach from the keyboard side.
+  const offset = yawVec(KB_AUTH_DIR.clone().multiplyScalar(dist), yaw);
+  const position = target.clone().add(offset);
 
   return {
     position: [position.x, position.y, position.z],
