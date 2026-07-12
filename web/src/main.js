@@ -88,7 +88,7 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.86;
+renderer.toneMappingExposure = 1.05;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 viewport.appendChild(renderer.domElement);
@@ -760,7 +760,7 @@ async function init() {
     // fitCameraToModel may clamp far for the piano radius; re-apply hall limits.
     applyHallCameraLimits(camera, controls, hallPack.meta);
     // Slightly lower exposure once house emissives + stage key stack with ACES.
-    renderer.toneMappingExposure = Math.min(pose.exposure, 1.55);
+    renderer.toneMappingExposure = Math.min(pose.exposure, 1.0);
   } else {
     renderer.toneMappingExposure = pose.exposure;
   }

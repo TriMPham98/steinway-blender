@@ -57,7 +57,7 @@ export const CAMERA_AUTHORING = Object.freeze({
     position: /** @type {[number, number, number]} */ ([2.39, 1.38, 2.37]),
     target: /** @type {[number, number, number]} */ ([0, 0.74, 0.35]),
     fov: 44,
-    exposure: 1.86,
+    exposure: 1.05,
   },
   front: {
     position: /** @type {[number, number, number]} */ ([0.02, 1.19, 3.08]),
@@ -73,13 +73,13 @@ export const CAMERA_AUTHORING = Object.freeze({
     position: /** @type {[number, number, number]} */ ([0.02, 1.58, 1.85]),
     target: /** @type {[number, number, number]} */ ([0.01, 0.75, 0.74]),
     fov: 42,
-    exposure: 1.86,
+    exposure: 1.05,
   },
   keyboardRange: {
     position: /** @type {[number, number, number]} */ ([0.06, 1.1, 1.22]),
     target: /** @type {[number, number, number]} */ ([0.06, 0.75, 0.77]),
     fov: 40,
-    exposure: 1.86,
+    exposure: 1.05,
   },
 });
 
@@ -93,24 +93,27 @@ export const HERO_CAMERA_DEFAULTS = {
 
 /** Default scene lighting (tuned in scene debug). */
 export const LIGHTING_DEFAULTS = {
-  ambientIntensity: 0.72,
-  hemiIntensity: 1.05,
+  // Direct lights must stay low: the open harp plate is a huge flat face. Stacked
+  // keys above ~2 total irradiance clip gold diffuse to pure white under ACES
+  // (verified: MeshBasic gold is fine; PBR gold only recovers when lights drop).
+  ambientIntensity: 0.18,
+  hemiIntensity: 0.22,
   hemiPosition: [0, 6, 0],
-  ceilingIntensity: 1.15,
+  ceilingIntensity: 0.4,
   ceilingPosition: [0, 5, 0.5],
-  roomIntensity: 0.65,
+  roomIntensity: 0.28,
   roomPosition: [-3, 2.5, 2],
-  viewerIntensity: 6.5,
+  viewerIntensity: 0.75,
   viewerDistance: 14,
-  viewerDecay: 1.8,
+  viewerDecay: 2.0,
   viewerFollowCamera: true,
   viewerOffset: [0, 0.05, 0],
   viewerPosition: [0, 1.05, 1.65],
-  keySpotIntensity: 2.8,
+  keySpotIntensity: 0.5,
   keySpotDistance: 10,
   keySpotAngleDeg: 36,
-  keySpotPenumbra: 0.12,
-  keySpotDecay: 1.2,
+  keySpotPenumbra: 0.22,
+  keySpotDecay: 1.6,
   keySpotFollowCamera: true,
   keySpotPosition: [0, 2.2, 1.1],
   keySpotTarget: [0, 0.95, 0],
@@ -407,13 +410,24 @@ function tuneMetal(
   mat,
   fallbackColor,
   fallbackRough,
-  { doubleSided = true, anisotropy = 0, anisotropyRotation = 0 } = {},
+  {
+    doubleSided = true,
+    anisotropy = 0,
+    anisotropyRotation = 0,
+    envMapIntensity = 1.28,
+    metalness = 1.0,
+    specularIntensity = 1.0,
+  } = {},
 ) {
   // glTF metallic-roughness loads as MeshStandardMaterial, which has no
   // anisotropy channel. Upgrade the cast plate/gold to MeshPhysicalMaterial so
   // its brushed grain can stretch the reflection. Carry the normal map across;
   // tuneMetal sets every other field explicitly below.
-  if (anisotropy > 0 && !mat.isMeshPhysicalMaterial) {
+  // Also upgrade when we need specularIntensity (only on MeshPhysicalMaterial).
+  if (
+    (anisotropy > 0 || specularIntensity < 1) &&
+    !mat.isMeshPhysicalMaterial
+  ) {
     const phys = new THREE.MeshPhysicalMaterial();
     phys.name = mat.name;
     phys.map = mat.map;
@@ -424,9 +438,12 @@ function tuneMetal(
     mat = phys;
   }
   prepMaps(mat);
-  mat.metalness = 1.0;
+  mat.metalness = metalness;
   mat.roughness = fallbackRough;
-  mat.envMapIntensity = 1.28;
+  mat.envMapIntensity = envMapIntensity;
+  if (mat.isMeshPhysicalMaterial && specularIntensity < 1) {
+    mat.specularIntensity = specularIntensity;
+  }
   // Gilded cast-iron plates carry a faint brushed radial grain. A little
   // anisotropy stretches the env reflection along the grain so the gold reads
   // as cast metal rather than a chrome mirror. UV-derived tangents drive the
@@ -910,19 +927,50 @@ export function refineMaterials(root) {
     } else if (/^sy_/i.test(name)) {
       next = lacquerFromExport(mat, { matte: /matte/i.test(name), lite: false });
     } else if (/gold/i.test(name)) {
-      next = tuneMetal(mat, 0xd4af37, 0.24, { anisotropy: 0.45 });
-    } else if (/brass/i.test(name)) {
-      // The cast plate (0T_Brass_mqm_Plate) and gold rim get a brushed grain;
-      // small fittings stay isotropic (thin trim, no meaningful UV grain).
-      const isPlate = /Rim|Plate/i.test(name);
-      next = tuneMetal(mat, 0xc6a456, 0.2, {
-        doubleSided: !isPlate,
-        anisotropy: isPlate ? 0.5 : 0,
+      // Painted gold leaf — low metalness so open-harp faces keep color under ACES.
+      next = tuneMetal(mat, 0xa67c2a, 0.68, {
+        doubleSided: true,
+        anisotropy: 0,
+        envMapIntensity: 0.12,
+        metalness: 0.12,
+        specularIntensity: 0.25,
       });
+    } else if (/brass/i.test(name)) {
+      // Steinway cast plate is gold-*painted* iron (not chrome). 0T_Brass_mqm is
+      // the bulk of the harp (~300k tris); _Plate is a small shell. Keep metalness
+      // very low — even 0.7 metal + modest lights clipped the face to pure white.
+      const isHarpPlate = /Plate/i.test(name) || /^0T_Brass_mqm$/i.test(name);
+      const isRim = /Rim/i.test(name);
+      if (isHarpPlate) {
+        next = tuneMetal(mat, 0xa67c2a, 0.72, {
+          doubleSided: false,
+          anisotropy: 0,
+          envMapIntensity: 0.1,
+          metalness: 0.1,
+          specularIntensity: 0.22,
+        });
+      } else {
+        next = tuneMetal(mat, 0xb8922e, isRim ? 0.62 : 0.55, {
+          doubleSided: !isRim,
+          anisotropy: 0,
+          envMapIntensity: isRim ? 0.15 : 0.2,
+          metalness: 0.18,
+          specularIntensity: 0.3,
+        });
+      }
     } else if (/copper/i.test(name)) {
-      next = tuneMetal(mat, 0xb87333, 0.28);
+      next = tuneMetal(mat, 0xb87333, 0.45, {
+        metalness: 0.45,
+        envMapIntensity: 0.35,
+        specularIntensity: 0.45,
+      });
     } else if (/steel|chrome|metal/i.test(name)) {
-      next = tuneMetal(mat, 0xc6c4c0, 0.22, { doubleSided: !/^0A_Steel/i.test(name) });
+      next = tuneMetal(mat, 0xc6c4c0, 0.4, {
+        doubleSided: !/^0A_Steel/i.test(name),
+        metalness: 0.65,
+        envMapIntensity: 0.45,
+        specularIntensity: 0.5,
+      });
     } else if (/wood|beech|maple/i.test(name)) {
       next = tuneWood(mat);
     } else if (/plastic/i.test(name)) {
@@ -982,25 +1030,27 @@ function radialBackground(center, mid, edge) {
   return tex;
 }
 
-/** Bright room probe for lacquer / wood reflections. */
+/** Room probe for lacquer / wood reflections (soft, not pure-white softboxes). */
 function roomEnvironment(pmrem) {
   const envScene = new THREE.Scene();
   // Neutral-gray probe matching Blender's neutral world (sRGB ~64). The glossy
   // black lacquer is effectively a mirror, so a blue probe (was 0x2a3040 bg,
   // cool fill 0xc0c8d8) tinted the whole body blue. Keep it neutral/warm so the
   // body reads as the neutral black of the Blender render.
-  envScene.background = new THREE.Color(0x3a3a3a);
-  envScene.add(new THREE.AmbientLight(0xefece6, 1.1));
-  const window = new THREE.DirectionalLight(0xfff6ec, 1.6);
+  // Softboxes used to be pure white — metals (harp plate) mirrored them and
+  // clipped to white under ACES. Warm gray panels still shape lacquer highlights.
+  envScene.background = new THREE.Color(0x2e2c28);
+  envScene.add(new THREE.AmbientLight(0xe8e2d6, 0.75));
+  const window = new THREE.DirectionalLight(0xfff6ec, 1.05);
   window.position.set(1, 3, 4);
   envScene.add(window);
-  const fill = new THREE.DirectionalLight(0xd2cec6, 0.75);
+  const fill = new THREE.DirectionalLight(0xd2cec6, 0.5);
   fill.position.set(-2, 2, -1);
   envScene.add(fill);
 
-  // Bright overhead softbox panels — glossy black lacquer needs distinct bright
-  // shapes to reflect, otherwise it has no highlights and reads as flat.
-  const panel = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  // Soft overhead panels — bright enough for lacquer shape, dull enough that
+  // the brass plate doesn't mirror pure white.
+  const panel = new THREE.MeshBasicMaterial({ color: 0xc8c2b4 });
   const makePanel = (w, h, x, y, z, rx) => {
     const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), panel);
     m.position.set(x, y, z);
@@ -1062,15 +1112,17 @@ export function setAuditoriumBackground(scene) {
  * @param {ReturnType<typeof setupSeatedViewerLights>["lights"]} lights
  */
 export function applyStageLighting(lights) {
-  // House is dark; piano is lit by stage key + modest fill.
-  lights.ambient.intensity = 0.28;
+  // House is dark; piano is lit by a soft stage key + modest fill.
+  // Irradiance budget is tight: the gold-painted harp plate clips to white if
+  // stacked direct lights exceed ~2 under ACES (see LIGHTING_DEFAULTS note).
+  lights.ambient.intensity = 0.16;
   lights.ambient.color.set(0xf0e8dc);
-  lights.hemi.intensity = 0.38;
+  lights.hemi.intensity = 0.2;
   lights.hemi.color.set(0xfff2e0);
   lights.hemi.groundColor.set(0x3a3028);
 
   // Stage key from above, slightly house-side (+Z) and stage-right of center.
-  lights.ceiling.intensity = 1.55;
+  lights.ceiling.intensity = 0.38;
   lights.ceiling.color.set(0xfff0dc);
   lights.ceiling.position.set(-1.5, 6.5, 2.0);
   // Wider ortho frustum so the lid casts onto the full stage, not just the body.
@@ -1083,16 +1135,17 @@ export function applyStageLighting(lights) {
   sc.updateProjectionMatrix();
 
   // House fill from the auditorium (+Z).
-  lights.room.intensity = 0.42;
+  lights.room.intensity = 0.22;
   lights.room.color.set(0xe8d8c0);
   lights.room.position.set(0, 5, 10);
 
-  // Seated player lamp — still useful for key tops, slightly softer.
-  lights.viewerLight.intensity = 4.2;
+  // Seated player lamp — key tops only; keep low so it doesn't bleach the plate.
+  lights.viewerLight.intensity = 0.65;
   lights.viewerLight.color.set(0xfff0dc);
   lights.viewerLight.distance = 16;
+  lights.viewerLight.decay = 2.0;
 
-  lights.keySpot.intensity = 2.2;
+  lights.keySpot.intensity = 0.42;
   lights.keySpot.color.set(0xfff8f0);
 }
 

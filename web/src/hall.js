@@ -229,7 +229,8 @@ function refineOneHallMaterial(mat) {
     // Chandeliers — soft warm glow without blowing ACES exposure.
     mat.color.set(0xfff0d4);
     mat.emissive.set(0xffe0a8);
-    mat.emissiveIntensity = 2.4;
+    // Soft glow only — high emissive washed the open harp plate under ACES.
+    mat.emissiveIntensity = 0.85;
     mat.roughness = 0.45;
     mat.metalness = 0;
     mat.envMapIntensity = 0.2;
