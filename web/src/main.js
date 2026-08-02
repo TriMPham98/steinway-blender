@@ -12,12 +12,8 @@ import {
   CAMERA_AUTHORING,
   CAMERA_PRESETS,
   KEYBOARD_RANGE_VIEW,
-  applyCameraPresetsYaw,
-  applyStageLighting,
   createContactShadow,
   createStudioGround,
-  disposeContactShadow,
-  disposeStudioGround,
   fitCameraToModel,
   frameModel,
   getHeroCameraPose,
@@ -28,7 +24,6 @@ import {
   prepInteriorStack,
   HERO_CAMERA_DEFAULTS,
   rotateYawPoint,
-  setAuditoriumBackground,
   setupEnvironment,
   setupShadows,
   createLightHelpers,
@@ -38,12 +33,6 @@ import {
   stripBenchLegs,
   stripStrayCurves,
 } from "./scene-utils.js";
-import {
-  applyHallCameraLimits,
-  loadHall,
-  placePianoOnStage,
-  prepareHall,
-} from "./hall.js";
 
 const MODEL_URL = "/models/steinway.glb";
 const MANIFEST_URL = "/models/steinway.keys.json";
@@ -111,8 +100,6 @@ const lightHelpers = createLightHelpers(scene, lights);
 let studioFloor = createStudioGround(scene);
 /** @type {THREE.Object3D | null} */
 let contactShadow = null;
-/** @type {THREE.Object3D | null} */
-let hallRoot = null;
 
 let modelRoot = null;
 let heroCameraDefaults = null;
@@ -269,8 +256,8 @@ function goToViewPreset(id, duration = 1.0) {
 let viewingKeyboardRange = false;
 let focusedOctaveShift = 0;
 
-// Authoring-frame (keyboard +Z) offset for the keyboard-range fly-to — same
-// relative camera as before stage yaw; world pose is recovered via R_y(yaw).
+// Authoring-frame (keyboard +Z) offset for the keyboard-range fly-to — world
+// pose is recovered via R_y(yaw) when the piano is rotated.
 const KB_AUTH = CAMERA_AUTHORING.keyboardRange;
 const KB_AUTH_OFFSET = new THREE.Vector3(
   KB_AUTH.position[0] - KB_AUTH.target[0],
@@ -299,9 +286,9 @@ function yawVec(v, yaw) {
  * Camera pose framing the keys the computer keyboard plays.
  *
  * Centers on the live active-range key bounds (so octave shifts stay framed),
- * and places the eye using the original keyboard-+Z offset rotated by the same
- * stage yaw as the piano — relative framing matches the product shot without
- * baking absolute world coords that drift after rotation.
+ * and places the eye using the original keyboard-+Z offset rotated by the
+ * piano yaw — relative framing matches the product shot without baking
+ * absolute world coords that drift after rotation.
  */
 function getKeyboardRangePose() {
   if (!piano || !modelRoot) return null;
@@ -701,9 +688,7 @@ function onPointerUp(event) {
 
 async function init() {
   setStatus("Loading model…");
-  // Hall loads in parallel with the piano; missing hall is a soft fallback to
-  // the studio floor (see loadHall).
-  const [gltf, manifest, hallPack] = await Promise.all([
+  const [gltf, manifest] = await Promise.all([
     new Promise((resolve, reject) => {
       loader.load(MODEL_URL, resolve, (xhr) => {
         if (xhr.total) {
@@ -712,7 +697,6 @@ async function init() {
       }, reject);
     }),
     loadManifest(),
-    loadHall(loader),
   ]);
 
   const model = gltf.scene;
@@ -731,39 +715,10 @@ async function init() {
   prepHingeTrim(model);
   prepInteriorStack(model);
   setupShadows(model);
-
-  if (hallPack) {
-    hallRoot = prepareHall(hallPack.root, hallPack.meta);
-    // Hall under the piano so the instrument always draws on top in equal depth.
-    scene.add(hallRoot);
-    // Three.js stage placement only — yaw keyboard to stage right from hall axes.
-    const placed = placePianoOnStage(model, hallRoot);
-    // Rotate the original product cameras by the same yaw (keeps relative framing).
-    applyCameraPresetsYaw(placed.yaw);
-    console.info(
-      `[hall] piano on stage (yaw ${((placed.yaw * 180) / Math.PI).toFixed(1)}°, keyboard → stage right)`,
-    );
-    disposeStudioGround(studioFloor);
-    studioFloor = null;
-    setAuditoriumBackground(scene);
-    applyStageLighting(lights);
-    applyHallCameraLimits(camera, controls, hallPack.meta);
-    // Stage mesh receives real shadows — no soft blob needed.
-    contactShadow = null;
-    console.info("[hall] Carnegie set ready");
-  } else {
-    contactShadow = createContactShadow(scene, model);
-  }
+  contactShadow = createContactShadow(scene, model);
 
   const pose = fitCameraToModel(camera, controls, model);
-  if (hallPack) {
-    // fitCameraToModel may clamp far for the piano radius; re-apply hall limits.
-    applyHallCameraLimits(camera, controls, hallPack.meta);
-    // Slightly lower exposure once house emissives + stage key stack with ACES.
-    renderer.toneMappingExposure = Math.min(pose.exposure, 1.0);
-  } else {
-    renderer.toneMappingExposure = pose.exposure;
-  }
+  renderer.toneMappingExposure = pose.exposure;
   syncViewerLight(pose.viewerLightPosition);
 
   heroCameraDefaults = {

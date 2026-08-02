@@ -1,16 +1,5 @@
 import * as THREE from "three";
 import { Reflector } from "three/examples/jsm/objects/Reflector.js";
-import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
-
-/** Baked equirectangular HDRI of the Carnegie Hall set (scripts/render_carnegie_hdri.py). */
-const CARNEGIE_HDRI_URL = "/env/carnegie.hdr";
-// The hall HDRI carries real stage-light energy — far brighter than the dark
-// synthetic probe the per-material envMapIntensity values were tuned against.
-// Scale the whole environment down so the black lacquer stays black and only
-// picks up hall reflections, instead of being relit gold. Tune to taste.
-// (baked HDRI mean luminance ~1.37, max ~24.6 — bright stage lighting; this
-// scale lands the effective irradiance near the old neutral probe's level.)
-const CARNEGIE_ENV_INTENSITY = 0.1;
 
 /**
  * Center model on ground and scale to a reasonable size for the viewer.
@@ -36,8 +25,12 @@ export function frameModel(root) {
   const maxDim = Math.max(size.x, size.y, size.z);
   if (maxDim > 2.5 && Number.isFinite(maxDim)) {
     root.scale.setScalar(2.5 / maxDim);
+    root.updateMatrixWorld(true);
+    // Scale is around the model origin (above the feet) — re-seat on Y=0.
+    const afterScale = new THREE.Box3().setFromObject(root);
+    root.position.y -= afterScale.min.y;
+    root.updateMatrixWorld(true);
   }
-  root.updateMatrixWorld(true);
 
   const finalBox = new THREE.Box3().setFromObject(root);
   return {
@@ -48,9 +41,8 @@ export function frameModel(root) {
 
 /**
  * Hand-tuned camera poses for the export layout (keyboard faces +Z).
- * When the piano is yawed on stage, call {@link applyCameraPresetsYaw} with the
- * same yaw so every preset keeps its original relative orientation — only the
- * world axes change.
+ * If the piano is yawed, call {@link applyCameraPresetsYaw} with the same yaw
+ * so every preset keeps its original relative orientation.
  */
 export const CAMERA_AUTHORING = Object.freeze({
   hero: {
@@ -173,9 +165,9 @@ export function rotateYawPoint(x, y, z, yaw) {
 }
 
 /**
- * Apply the piano’s stage yaw to every hand-tuned camera pose so relative
- * framing matches the pre-rotation product shot (no flipped approach axis).
- * @param {number} yaw  same value as modelRoot.rotation.y after placePianoOnStage
+ * Apply a piano yaw to every hand-tuned camera pose so relative framing
+ * matches the pre-rotation product shot (no flipped approach axis).
+ * @param {number} yaw  same value as modelRoot.rotation.y
  */
 export function applyCameraPresetsYaw(yaw) {
   const copy = (src) => ({
@@ -417,17 +409,15 @@ function tuneMetal(
     envMapIntensity = 1.28,
     metalness = 1.0,
     specularIntensity = 1.0,
+    clearcoat = 0,
+    clearcoatRoughness = 0.25,
   } = {},
 ) {
   // glTF metallic-roughness loads as MeshStandardMaterial, which has no
-  // anisotropy channel. Upgrade the cast plate/gold to MeshPhysicalMaterial so
-  // its brushed grain can stretch the reflection. Carry the normal map across;
-  // tuneMetal sets every other field explicitly below.
-  // Also upgrade when we need specularIntensity (only on MeshPhysicalMaterial).
-  if (
-    (anisotropy > 0 || specularIntensity < 1) &&
-    !mat.isMeshPhysicalMaterial
-  ) {
+  // anisotropy / clearcoat. Upgrade when those channels are needed.
+  const needsPhysical =
+    anisotropy > 0 || specularIntensity < 1 || clearcoat > 0;
+  if (needsPhysical && !mat.isMeshPhysicalMaterial) {
     const phys = new THREE.MeshPhysicalMaterial();
     phys.name = mat.name;
     phys.map = mat.map;
@@ -441,8 +431,12 @@ function tuneMetal(
   mat.metalness = metalness;
   mat.roughness = fallbackRough;
   mat.envMapIntensity = envMapIntensity;
-  if (mat.isMeshPhysicalMaterial && specularIntensity < 1) {
-    mat.specularIntensity = specularIntensity;
+  if (mat.isMeshPhysicalMaterial) {
+    if (specularIntensity < 1) mat.specularIntensity = specularIntensity;
+    if (clearcoat > 0) {
+      mat.clearcoat = clearcoat;
+      mat.clearcoatRoughness = clearcoatRoughness;
+    }
   }
   // Gilded cast-iron plates carry a faint brushed radial grain. A little
   // anisotropy stretches the env reflection along the grain so the gold reads
@@ -927,49 +921,53 @@ export function refineMaterials(root) {
     } else if (/^sy_/i.test(name)) {
       next = lacquerFromExport(mat, { matte: /matte/i.test(name), lite: false });
     } else if (/gold/i.test(name)) {
-      // Painted gold leaf — low metalness so open-harp faces keep color under ACES.
-      next = tuneMetal(mat, 0xa67c2a, 0.68, {
+      // materialiq gold: metal 1, packed roughness ~0.63. Satin base + light
+      // clearcoat reads shiny like Blender without mirror-clipping flat faces.
+      next = tuneMetal(mat, 0xc6a456, 0.52, {
         doubleSided: true,
-        anisotropy: 0,
-        envMapIntensity: 0.12,
-        metalness: 0.12,
-        specularIntensity: 0.25,
+        anisotropy: 0.35,
+        envMapIntensity: 0.55,
+        metalness: 1.0,
+        clearcoat: 0.45,
+        clearcoatRoughness: 0.18,
       });
     } else if (/brass/i.test(name)) {
-      // Steinway cast plate is gold-*painted* iron (not chrome). 0T_Brass_mqm is
-      // the bulk of the harp (~300k tris); _Plate is a small shell. Keep metalness
-      // very low — even 0.7 metal + modest lights clipped the face to pure white.
+      // Cast plate (0T_Brass_mqm bulk + _Plate shell): match Blender satin metal
+      // (map rough ~0.63). Clearcoat adds the lacquered-gold sheen; roughness
+      // stays high enough that large faces keep gold color under ACES.
       const isHarpPlate = /Plate/i.test(name) || /^0T_Brass_mqm$/i.test(name);
       const isRim = /Rim/i.test(name);
       if (isHarpPlate) {
-        next = tuneMetal(mat, 0xa67c2a, 0.72, {
+        next = tuneMetal(mat, 0xc6a456, 0.55, {
           doubleSided: false,
-          anisotropy: 0,
-          envMapIntensity: 0.1,
-          metalness: 0.1,
-          specularIntensity: 0.22,
+          anisotropy: 0.4,
+          envMapIntensity: 0.5,
+          metalness: 1.0,
+          clearcoat: 0.5,
+          clearcoatRoughness: 0.16,
         });
       } else {
-        next = tuneMetal(mat, 0xb8922e, isRim ? 0.62 : 0.55, {
+        next = tuneMetal(mat, 0xc6a456, isRim ? 0.45 : 0.4, {
           doubleSided: !isRim,
-          anisotropy: 0,
-          envMapIntensity: isRim ? 0.15 : 0.2,
-          metalness: 0.18,
-          specularIntensity: 0.3,
+          anisotropy: isRim ? 0.3 : 0,
+          envMapIntensity: isRim ? 0.6 : 0.65,
+          metalness: 1.0,
+          clearcoat: 0.4,
+          clearcoatRoughness: 0.2,
         });
       }
     } else if (/copper/i.test(name)) {
-      next = tuneMetal(mat, 0xb87333, 0.45, {
-        metalness: 0.45,
-        envMapIntensity: 0.35,
-        specularIntensity: 0.45,
+      next = tuneMetal(mat, 0xb87333, 0.4, {
+        metalness: 1.0,
+        envMapIntensity: 0.6,
+        clearcoat: 0.25,
+        clearcoatRoughness: 0.3,
       });
     } else if (/steel|chrome|metal/i.test(name)) {
-      next = tuneMetal(mat, 0xc6c4c0, 0.4, {
+      next = tuneMetal(mat, 0xc6c4c0, 0.35, {
         doubleSided: !/^0A_Steel/i.test(name),
-        metalness: 0.65,
-        envMapIntensity: 0.45,
-        specularIntensity: 0.5,
+        metalness: 1.0,
+        envMapIntensity: 0.65,
       });
     } else if (/wood|beech|maple/i.test(name)) {
       next = tuneWood(mat);
@@ -1067,86 +1065,12 @@ function roomEnvironment(pmrem) {
 /** Light room backdrop + IBL (seated viewing context). */
 export function setupEnvironment(renderer, scene) {
   const pmrem = new THREE.PMREMGenerator(renderer);
-  // Synthetic softbox probe drives reflections from frame one; the baked
-  // Carnegie HDRI replaces it asynchronously below (and stays as the fallback
-  // if the asset is missing — e.g. a build that skipped the Blender bake).
-  const fallback = roomEnvironment(pmrem);
-  scene.environment = fallback;
+  scene.environment = roomEnvironment(pmrem);
   scene.background = radialBackground("#c9c6bf", "#9a9ca2", "#33363d");
   // Fog was flattening surface detail — keep backdrop gradient only.
   scene.fog = null;
-
-  new RGBELoader().load(
-    CARNEGIE_HDRI_URL,
-    (hdr) => {
-      hdr.mapping = THREE.EquirectangularReflectionMapping;
-      const envMap = pmrem.fromEquirectangular(hdr).texture;
-      hdr.dispose();
-      fallback.dispose();
-      scene.environment = envMap;
-      scene.environmentIntensity = CARNEGIE_ENV_INTENSITY;
-      pmrem.dispose();
-    },
-    undefined,
-    () => {
-      // Missing/failed HDRI: keep the synthetic probe, free the generator.
-      pmrem.dispose();
-    },
-  );
+  pmrem.dispose();
   return scene.environment;
-}
-
-/**
- * Dark auditorium void once the 3D Carnegie set is in the scene (replaces the
- * bright showroom cyclorama so the house reads as a real room edge).
- * @param {THREE.Scene} scene
- */
-export function setAuditoriumBackground(scene) {
-  scene.background = radialBackground("#2a2620", "#1a1814", "#0a0908");
-}
-
-/**
- * Stage-oriented rebalance of the seated light rig once the hall mesh is live.
- * Dims ambient wash so plaster walls stay dark; keeps a warm stage key and a
- * soft house fill so the piano remains readable.
- * @param {ReturnType<typeof setupSeatedViewerLights>["lights"]} lights
- */
-export function applyStageLighting(lights) {
-  // House is dark; piano is lit by a soft stage key + modest fill.
-  // Irradiance budget is tight: the gold-painted harp plate clips to white if
-  // stacked direct lights exceed ~2 under ACES (see LIGHTING_DEFAULTS note).
-  lights.ambient.intensity = 0.16;
-  lights.ambient.color.set(0xf0e8dc);
-  lights.hemi.intensity = 0.2;
-  lights.hemi.color.set(0xfff2e0);
-  lights.hemi.groundColor.set(0x3a3028);
-
-  // Stage key from above, slightly house-side (+Z) and stage-right of center.
-  lights.ceiling.intensity = 0.38;
-  lights.ceiling.color.set(0xfff0dc);
-  lights.ceiling.position.set(-1.5, 6.5, 2.0);
-  // Wider ortho frustum so the lid casts onto the full stage, not just the body.
-  const sc = lights.ceiling.shadow.camera;
-  sc.left = -4;
-  sc.right = 4;
-  sc.top = 4;
-  sc.bottom = -4;
-  sc.far = 18;
-  sc.updateProjectionMatrix();
-
-  // House fill from the auditorium (+Z).
-  lights.room.intensity = 0.22;
-  lights.room.color.set(0xe8d8c0);
-  lights.room.position.set(0, 5, 10);
-
-  // Seated player lamp — key tops only; keep low so it doesn't bleach the plate.
-  lights.viewerLight.intensity = 0.65;
-  lights.viewerLight.color.set(0xfff0dc);
-  lights.viewerLight.distance = 16;
-  lights.viewerLight.decay = 2.0;
-
-  lights.keySpot.intensity = 0.42;
-  lights.keySpot.color.set(0xfff8f0);
 }
 
 /**
@@ -1167,7 +1091,7 @@ export function disposeStudioGround(floor) {
 }
 
 /**
- * Remove the soft contact-shadow blob once the stage mesh receives real shadows.
+ * Remove the soft contact-shadow blob and free GPU resources.
  * @param {THREE.Object3D | null | undefined} shadow
  */
 export function disposeContactShadow(shadow) {
@@ -1456,18 +1380,30 @@ const STUDIO_FLOOR_SHADER = {
  * Adds one extra render pass per frame.
  * @returns {Reflector} the floor (use getRenderTarget().setSize() on resize)
  */
+/** World Y of the studio Reflector — slightly below grounded feet (y=0). */
+export const STUDIO_FLOOR_Y = -0.003;
+
+/**
+ * Soft contact-shadow plane sits above the floor and below caster bottoms
+ * so it doesn't coplanar-fight either surface under logarithmic depth.
+ */
+export const CONTACT_SHADOW_Y = 0.0015;
+
 export function createStudioGround(scene) {
   const dpr = Math.min(window.devicePixelRatio, 2);
   const floor = new Reflector(new THREE.PlaneGeometry(80, 80), {
     textureWidth: window.innerWidth * dpr,
     textureHeight: window.innerHeight * dpr,
-    clipBias: 0.003,
+    // Higher bias reduces reflection-plane acne under the body/casters.
+    clipBias: 0.01,
     // Neutral tint: dimming is handled by the shader's mix toward uFloorColor.
     color: 0x808080,
     shader: STUDIO_FLOOR_SHADER,
   });
   floor.rotation.x = -Math.PI / 2;
-  floor.position.y = 0;
+  // Below the grounded feet so coplanar caster bottoms don't z-fight the glass.
+  floor.position.y = STUDIO_FLOOR_Y;
+  floor.renderOrder = -1;
   scene.add(floor);
   return floor;
 }
@@ -1506,11 +1442,16 @@ export function createContactShadow(scene, model) {
       map: softShadowTexture(),
       transparent: true,
       depthWrite: false,
+      // Pull slightly toward the camera so log-depth + floor separation stay stable.
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
       opacity: 0.9,
     }),
   );
   shadow.rotation.x = -Math.PI / 2;
-  shadow.position.set(center.x, 0.004, center.z);
+  // Between studio floor (below) and caster contact geometry (above).
+  shadow.position.set(center.x, CONTACT_SHADOW_Y, center.z);
   shadow.renderOrder = 1;
   scene.add(shadow);
   return shadow;
