@@ -7,6 +7,7 @@ import { LiveSession } from "./live.js";
 import { PianoAudio } from "./audio.js";
 import { MIDI_HIGH, MIDI_LOW } from "./anim.js";
 import { backendAvailable, findDefaultPort, listInputPorts } from "./midi.js";
+import { BATCH_SOURCE_LAYER, batchMeshes } from "./batching.js";
 
 import {
   CAMERA_AUTHORING,
@@ -14,6 +15,7 @@ import {
   KEYBOARD_RANGE_VIEW,
   createContactShadow,
   createStudioGround,
+  FLOOR_REFLECTION_SCALE,
   fitCameraToModel,
   frameModel,
   getHeroCameraPose,
@@ -77,9 +79,14 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+// Slightly open exposure pairs with the soft ambient-heavy light rig.
+renderer.toneMappingExposure = 1.12;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+// The shadow-casting light is fixed, so the shadow map only changes when the
+// piano itself moves (keys, action, lid). Re-rendered on demand — see animate().
+renderer.shadowMap.autoUpdate = false;
+renderer.shadowMap.needsUpdate = true;
 viewport.appendChild(renderer.domElement);
 
 setupEnvironment(renderer, scene);
@@ -102,6 +109,8 @@ let studioFloor = createStudioGround(scene);
 let contactShadow = null;
 
 let modelRoot = null;
+/** @type {ReturnType<typeof batchMeshes> | null} */
+let modelBatch = null;
 let heroCameraDefaults = null;
 /** @type {{ syncSlidersFromScene: () => void } | null} */
 let sceneDebug = null;
@@ -110,6 +119,8 @@ let lightDebug = null;
 
 const loader = new GLTFLoader();
 const raycaster = new THREE.Raycaster();
+// Keys / lid meshes are drawn via BatchedMesh; their sources live on this layer.
+raycaster.layers.enable(BATCH_SOURCE_LAYER);
 const pointer = new THREE.Vector2();
 let piano = null;
 let live = null;
@@ -440,6 +451,8 @@ function setTransportRunning(running) {
   ui.btnStart.disabled = running;
   ui.btnStop.disabled = !running;
   ui.port.disabled = running;
+  // Stopping a live session snaps every key back (resetKeys) outside the loop.
+  requestRender({ poseChanged: true });
 }
 
 function syncLidToggleLabel() {
@@ -716,6 +729,11 @@ async function init() {
   prepInteriorStack(model);
   setupShadows(model);
   contactShadow = createContactShadow(scene, model);
+  modelBatch = batchMeshes(model, scene);
+  console.info(
+    `[steinway] batched ${modelBatch.meshCount} meshes into ${modelBatch.batches.length} draws`,
+  );
+  requestRender({ poseChanged: true });
 
   const pose = fitCameraToModel(camera, controls, model);
   renderer.toneMappingExposure = pose.exposure;
@@ -732,6 +750,9 @@ async function init() {
     window.__cam = camera;
     window.__ctrl = controls;
     window.__model = model;
+    window.__renderer = renderer;
+    window.__scene = scene;
+    window.__floor = studioFloor;
 
     const debugStack = document.createElement("div");
     debugStack.className = "debug-stack";
@@ -946,23 +967,107 @@ function onResize() {
   camera.updateProjectionMatrix();
   renderer.setSize(w, h);
   if (studioFloor?.getRenderTarget) {
-    const dpr = Math.min(window.devicePixelRatio, 2);
-    studioFloor.getRenderTarget().setSize(w * dpr, h * dpr);
+    const scale = renderer.getPixelRatio() * FLOOR_REFLECTION_SCALE;
+    studioFloor.getRenderTarget().setSize(w * scale, h * scale);
   }
+  requestRender();
 }
 window.addEventListener("resize", onResize);
+
+// --- Render on demand ---
+// The piano sits still most of the time, so frames are only drawn while
+// something changes: camera motion/damping, a view tween, keys/action/lid
+// animating, or UI input (debug panels). Idle = no GPU work at all.
+
+/** Keep rendering this long after the last pose change so dampers settle. */
+const POSE_TAIL_S = 0.6;
+let pendingFrames = 2;
+let poseTail = 0;
+
+/**
+ * Ask for at least one more frame.
+ * @param {{ poseChanged?: boolean }} [opts] poseChanged: model parts moved, so
+ *   the batched matrices and the shadow map need refreshing too.
+ */
+function requestRender({ poseChanged = false } = {}) {
+  pendingFrames = Math.max(pendingFrames, 1);
+  if (poseChanged) poseTail = Math.max(poseTail, POSE_TAIL_S);
+}
+
+// Debug sliders/buttons, drawer controls etc. can change lights, materials or
+// exposure without going through the render loop.
+for (const type of ["input", "change", "click"]) {
+  window.addEventListener(type, () => requestRender({ poseChanged: true }));
+}
+// Any controls.update() that moves the camera (debug panel, fitCameraToModel)
+// fires "change" — not only the one in animate().
+controls.addEventListener("change", () => requestRender());
+
+// --- Adaptive resolution ---
+// If the GPU can't hold ~40 fps while actively rendering, step the pixel ratio
+// down (never back up within a session, so it can't oscillate).
+const DPR_MIN = 1;
+const DPR_STEP = 0.25;
+const SLOW_FRAME_S = 1 / 40;
+const perfWindow = { frames: 0, time: 0 };
+
+function trackFrameTime(dt) {
+  // Ignore hitches (tab switches, GC) — only sustained slowness counts.
+  if (dt > 0.1) return;
+  perfWindow.frames++;
+  perfWindow.time += dt;
+  if (perfWindow.frames < 90) return;
+  const avg = perfWindow.time / perfWindow.frames;
+  perfWindow.frames = 0;
+  perfWindow.time = 0;
+  const dpr = renderer.getPixelRatio();
+  if (avg > SLOW_FRAME_S && dpr > DPR_MIN) {
+    renderer.setPixelRatio(Math.max(DPR_MIN, dpr - DPR_STEP));
+    onResize();
+    console.info(
+      `[steinway] ${(avg * 1000).toFixed(1)} ms/frame — pixel ratio ${dpr} → ${renderer.getPixelRatio()}`,
+    );
+  }
+}
+
+let renderedLastFrame = false;
 
 function animate() {
   requestAnimationFrame(animate);
   const dt = clock.getDelta();
+
+  let posed = false;
   if (!live?.isRunning) {
-    piano?.step(dt);
+    if (piano?.step(dt)) posed = true;
+  } else if (live.animating) {
+    posed = true;
   }
-  if (caseRig && caseState) {
-    stepCase(caseState, caseRig, dt);
-  }
+  if (caseRig && caseState && stepCase(caseState, caseRig, dt)) posed = true;
+  if (posed) poseTail = POSE_TAIL_S;
+
+  const tweening = cameraTween.active;
   updateCameraTween(dt);
-  controls.update();
+  const cameraMoved = controls.update() || tweening;
+
+  const poseLive = poseTail > 0;
+  poseTail = Math.max(0, poseTail - dt);
+  const needed =
+    poseLive || cameraMoved || pendingFrames > 0 || lightHelpers.group.visible;
+  if (!needed) {
+    renderedLastFrame = false;
+    perfWindow.frames = 0;
+    perfWindow.time = 0;
+    return;
+  }
+  pendingFrames = Math.max(0, pendingFrames - 1);
+  // Only a frame that follows another rendered frame measures real frame cost.
+  if (renderedLastFrame) trackFrameTime(dt);
+  renderedLastFrame = true;
+
+  if (poseLive) {
+    modelBatch?.sync();
+    renderer.shadowMap.needsUpdate = true;
+  }
   syncViewerLight(camera.position);
   if (lightHelpers.group.visible) lightHelpers.update();
   renderer.render(scene, camera);

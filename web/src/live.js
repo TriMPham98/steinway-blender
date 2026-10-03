@@ -23,6 +23,8 @@ export class LiveSession {
     /** @type {MIDIInput | null} */
     this.input = null;
     this._lastT = 0;
+    /** Whether the last tick moved keys/pedal (drives render-on-demand). */
+    this.animating = false;
     this._raf = 0;
     this._boundMidi = (e) => this._onMidi(e);
   }
@@ -86,7 +88,7 @@ export class LiveSession {
     if (this.hooks.getSettings) {
       this.piano.applySettings(this.hooks.getSettings());
     }
-    this.piano.step(dt);
+    this.animating = this.piano.step(dt);
     this._raf = requestAnimationFrame(() => this._tick());
   }
 }

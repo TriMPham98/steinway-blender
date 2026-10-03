@@ -151,16 +151,18 @@ export function easeStep(state, pressAngle, dt, applyKey, applyPedal) {
       state.hammer.set(note, 1);
       hamFired.add(note);
     }
-    let h = state.hammer.get(note) ?? 0;
-    if (!hamFired.has(note) && h > 0) h *= decay;
-    if (h < 1e-4) {
-      h = 0;
-      state.hammer.delete(note);
-    } else {
-      state.hammer.set(note, h);
-    }
     const keyRotX = pos * pressAngle;
-    applyKey(note, pos, keyRotX, h);
+    applyKey(note, pos, keyRotX, state.hammer.get(note) ?? 0);
+  }
+
+  // Hammer impulses decay independently of key motion (as in anim.py): a key
+  // leaves `active` as soon as it settles — held at the key bed or back at
+  // rest — so decaying only active notes froze the hammer part-way up and kept
+  // this step reporting "animating" forever.
+  for (const [note, h0] of state.hammer) {
+    const h = hamFired.has(note) ? h0 : h0 * decay;
+    if (h < 1e-4) state.hammer.delete(note);
+    else state.hammer.set(note, h);
   }
 
   if (state.pedalActive && state.pedalObj && applyPedal) {

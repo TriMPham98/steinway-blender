@@ -49,7 +49,7 @@ export const CAMERA_AUTHORING = Object.freeze({
     position: /** @type {[number, number, number]} */ ([2.39, 1.38, 2.37]),
     target: /** @type {[number, number, number]} */ ([0, 0.74, 0.35]),
     fov: 44,
-    exposure: 1.05,
+    exposure: 1.12,
   },
   front: {
     position: /** @type {[number, number, number]} */ ([0.02, 1.19, 3.08]),
@@ -65,13 +65,13 @@ export const CAMERA_AUTHORING = Object.freeze({
     position: /** @type {[number, number, number]} */ ([0.02, 1.58, 1.85]),
     target: /** @type {[number, number, number]} */ ([0.01, 0.75, 0.74]),
     fov: 42,
-    exposure: 1.05,
+    exposure: 1.12,
   },
   keyboardRange: {
     position: /** @type {[number, number, number]} */ ([0.06, 1.1, 1.22]),
     target: /** @type {[number, number, number]} */ ([0.06, 0.75, 0.77]),
     fov: 40,
-    exposure: 1.05,
+    exposure: 1.12,
   },
 });
 
@@ -85,30 +85,34 @@ export const HERO_CAMERA_DEFAULTS = {
 
 /** Default scene lighting (tuned in scene debug). */
 export const LIGHTING_DEFAULTS = {
-  // Direct lights must stay low: the open harp plate is a huge flat face. Stacked
-  // keys above ~2 total irradiance clip gold diffuse to pure white under ACES
-  // (verified: MeshBasic gold is fine; PBR gold only recovers when lights drop).
-  ambientIntensity: 0.18,
-  hemiIntensity: 0.22,
-  hemiPosition: [0, 6, 0],
-  ceilingIntensity: 0.4,
-  ceilingPosition: [0, 5, 0.5],
-  roomIntensity: 0.28,
-  roomPosition: [-3, 2.5, 2],
-  viewerIntensity: 0.75,
-  viewerDistance: 14,
-  viewerDecay: 2.0,
-  viewerFollowCamera: true,
+  // Even soft showroom: most energy in ambient + hemi so the body reads flatly
+  // lit without a hot key. Directionals stay modest — the open harp plate is a
+  // huge flat face, and stacked keys above ~2 total direct irradiance clip gold
+  // to pure white under ACES. Camera-follow lamps stay off so orbiting doesn't
+  // drag a hotspot around the keys.
+  ambientIntensity: 0.48,
+  hemiIntensity: 0.58,
+  hemiPosition: [0, 8, 0],
+  ceilingIntensity: 0.26,
+  ceilingPosition: [0.6, 9, 1.2],
+  roomIntensity: 0.3,
+  roomPosition: [-3.5, 5.5, 2.8],
+  // Gentle fixed front fill (not a camera lamp).
+  viewerIntensity: 0.22,
+  viewerDistance: 18,
+  viewerDecay: 1.4,
+  viewerFollowCamera: false,
   viewerOffset: [0, 0.05, 0],
-  viewerPosition: [0, 1.05, 1.65],
-  keySpotIntensity: 0.5,
-  keySpotDistance: 10,
-  keySpotAngleDeg: 36,
-  keySpotPenumbra: 0.22,
-  keySpotDecay: 1.6,
-  keySpotFollowCamera: true,
-  keySpotPosition: [0, 2.2, 1.1],
-  keySpotTarget: [0, 0.95, 0],
+  viewerPosition: [0.2, 2.4, 2.8],
+  // Wide soft key wash over the keyboard — high penumbra, low intensity.
+  keySpotIntensity: 0.16,
+  keySpotDistance: 16,
+  keySpotAngleDeg: 62,
+  keySpotPenumbra: 0.9,
+  keySpotDecay: 1.2,
+  keySpotFollowCamera: false,
+  keySpotPosition: [0.35, 3.0, 2.4],
+  keySpotTarget: [0, 0.85, 0.15],
   keySpotCamX: 0.3,
   keySpotCamY: 1.1,
   keySpotCamZMul: 0.55,
@@ -353,7 +357,7 @@ function lacquerFromExport(mat, { matte, lite }) {
     // charcoal (equal RGB) so unreflected areas read as deep gray under tone
     // mapping instead of an ACES-crushed void — but with no blue bias, so the
     // body matches the neutral black of the Blender render.
-    color: new THREE.Color(lite ? 0xcfc8b8 : shiny ? 0x121212 : 0x0a0a0a),
+    color: new THREE.Color(lite ? 0xe4dece : shiny ? 0x121212 : 0x0a0a0a),
     roughness,
     metalness: 0,
     clearcoat: matte ? (lite ? 0 : 0.12) : lite ? 0.35 : 1.0,
@@ -938,21 +942,25 @@ export function refineMaterials(root) {
       const isHarpPlate = /Plate/i.test(name) || /^0T_Brass_mqm$/i.test(name);
       const isRim = /Rim/i.test(name);
       if (isHarpPlate) {
-        next = tuneMetal(mat, 0xc6a456, 0.55, {
+        // Deeper, more saturated bronze-gold than the trim: the lighter tint +
+        // heavier white clearcoat desaturated the huge flat plate under ACES.
+        next = tuneMetal(mat, 0xb48c3e, 0.55, {
           doubleSided: false,
           anisotropy: 0.4,
           envMapIntensity: 0.5,
           metalness: 1.0,
-          clearcoat: 0.5,
+          clearcoat: 0.3,
           clearcoatRoughness: 0.16,
         });
       } else {
-        next = tuneMetal(mat, 0xc6a456, isRim ? 0.45 : 0.4, {
+        // The rim flange is a big flat face like the plate: same deeper tint and
+        // lighter coat so it doesn't wash out to cream next to it.
+        next = tuneMetal(mat, isRim ? 0xb48c3e : 0xc6a456, isRim ? 0.5 : 0.4, {
           doubleSided: !isRim,
           anisotropy: isRim ? 0.3 : 0,
-          envMapIntensity: isRim ? 0.6 : 0.65,
+          envMapIntensity: isRim ? 0.5 : 0.65,
           metalness: 1.0,
-          clearcoat: 0.4,
+          clearcoat: isRim ? 0.25 : 0.4,
           clearcoatRoughness: 0.2,
         });
       }
@@ -1007,58 +1015,117 @@ export function refineMaterials(root) {
 }
 
 /**
- * Vignetted studio cyclorama: a soft warm-neutral glow behind the piano that
- * falls off to dark edges, so the backdrop has depth instead of reading flat.
+ * Shared studio cyclorama palette: the dome's horizon and the floor's far field
+ * use the same color so the floor melts into the backdrop with no visible seam.
  */
-function radialBackground(center, mid, edge) {
-  const c = document.createElement("canvas");
-  c.width = c.height = 1024;
-  const ctx = c.getContext("2d");
-  // Focus the glow slightly above center so the horizon sits behind the piano.
-  const g = ctx.createRadialGradient(512, 460, 30, 512, 470, 820);
-  g.addColorStop(0.0, center);
-  g.addColorStop(0.5, mid);
-  g.addColorStop(1.0, edge);
-  ctx.fillStyle = edge;
-  ctx.fillRect(0, 0, 1024, 1024);
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 1024, 1024);
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = SRGB;
-  return tex;
+export const STUDIO_PALETTE = {
+  zenith: new THREE.Color(0x141517),
+  horizon: new THREE.Color(0x524f4a),
+  floor: new THREE.Color(0x302e2b),
+};
+
+/** 8-bit ordered-ish noise to break up banding in the dark gradients. */
+const DITHER_GLSL = /* glsl */ `
+  float studioDither( vec2 p ) {
+    return ( fract( sin( dot( p, vec2( 12.9898, 78.233 ) ) ) * 43758.5453 ) - 0.5 ) / 255.0;
+  }`;
+
+/**
+ * World-space backdrop dome (replaces the old screen-space radial texture, which
+ * met the floor in a hard light/dark line). Gradient runs from the shared
+ * horizon color up to a dark zenith, so it lines up with the floor's far fade
+ * from every camera angle.
+ */
+function createStudioDome() {
+  const mat = new THREE.ShaderMaterial({
+    name: "StudioDome",
+    uniforms: {
+      uZenith: { value: STUDIO_PALETTE.zenith },
+      uHorizon: { value: STUDIO_PALETTE.horizon },
+    },
+    vertexShader: /* glsl */ `
+      varying vec3 vWorldPos;
+      void main() {
+        vec4 wp = modelMatrix * vec4( position, 1.0 );
+        vWorldPos = wp.xyz;
+        gl_Position = projectionMatrix * viewMatrix * wp;
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uZenith;
+      uniform vec3 uHorizon;
+      varying vec3 vWorldPos;
+      ${DITHER_GLSL}
+      void main() {
+        vec3 dir = normalize( vWorldPos - cameraPosition );
+        // Bright band hugging the horizon, falling off fast toward the zenith.
+        float t = pow( smoothstep( 0.0, 0.7, max( dir.y, 0.0 ) ), 0.6 );
+        vec3 col = mix( uHorizon, uZenith, t );
+        gl_FragColor = vec4( col + studioDither( gl_FragCoord.xy ), 1.0 );
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+      }`,
+    side: THREE.BackSide,
+    depthTest: false,
+    depthWrite: false,
+  });
+  // Encloses the full orbit range (maxDistance 12) inside the camera far plane.
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(30, 48, 24), mat);
+  dome.name = "Studio_Dome";
+  dome.frustumCulled = false;
+  dome.renderOrder = -10;
+  return dome;
 }
 
-/** Room probe for lacquer / wood reflections (soft, not pure-white softboxes). */
+/**
+ * Room probe for lacquer / wood / metal reflections. Only emissive (MeshBasic)
+ * panels matter here — PMREM just captures what they look like, so lights in
+ * this scene would do nothing.
+ *
+ * Panels are DoubleSide on purpose: a PlaneGeometry faces +Z, so a ceiling
+ * rotated -90° about X (or a wall facing away from the origin) is back-face
+ * culled and silently missing from the probe. That left the lacquer reflecting
+ * a near-black void and the body read as a flat silhouette.
+ */
 function roomEnvironment(pmrem) {
   const envScene = new THREE.Scene();
-  // Neutral-gray probe matching Blender's neutral world (sRGB ~64). The glossy
-  // black lacquer is effectively a mirror, so a blue probe (was 0x2a3040 bg,
-  // cool fill 0xc0c8d8) tinted the whole body blue. Keep it neutral/warm so the
-  // body reads as the neutral black of the Blender render.
-  // Softboxes used to be pure white — metals (harp plate) mirrored them and
-  // clipped to white under ACES. Warm gray panels still shape lacquer highlights.
-  envScene.background = new THREE.Color(0x2e2c28);
-  envScene.add(new THREE.AmbientLight(0xe8e2d6, 0.75));
-  const window = new THREE.DirectionalLight(0xfff6ec, 1.05);
-  window.position.set(1, 3, 4);
-  envScene.add(window);
-  const fill = new THREE.DirectionalLight(0xd2cec6, 0.5);
-  fill.position.set(-2, 2, -1);
-  envScene.add(fill);
+  // Neutral-warm probe: glossy black lacquer is nearly a mirror, so cool probes
+  // tint the body blue.
+  envScene.background = new THREE.Color(0x1c1b19);
 
-  // Soft overhead panels — bright enough for lacquer shape, dull enough that
-  // the brass plate doesn't mirror pure white.
-  const panel = new THREE.MeshBasicMaterial({ color: 0xc8c2b4 });
-  const makePanel = (w, h, x, y, z, rx) => {
-    const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), panel);
+  const makePanel = (color, w, h, x, y, z, rx = 0, ry = 0) => {
+    const m = new THREE.Mesh(
+      new THREE.PlaneGeometry(w, h),
+      new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide }),
+    );
     m.position.set(x, y, z);
     m.rotation.x = rx;
+    m.rotation.y = ry;
     envScene.add(m);
   };
-  makePanel(7, 2.6, 0, 7.5, 1.5, -Math.PI / 2); // ceiling strip overhead
-  makePanel(5, 3.5, 0, 4.5, 6.5, 0); // front fill window
-  makePanel(2.8, 1.6, -3.5, 3.2, 2, 0.15); // side kicker for lacquer edge highlights
+  const c = (hex, k) => new THREE.Color(hex).multiplyScalar(k);
 
+  // Dim lit floor: the vertical rim and legs mostly mirror the lower hemisphere,
+  // so a floor bounce gives the black body a soft gradient instead of a void.
+  makePanel(c(0x5c5852, 1), 30, 30, 0, -3, 0, -Math.PI / 2);
+  // Broad overhead softbox — kept modest so the flat gilded plate stays gold
+  // instead of mirroring white (see refineMaterials brass notes).
+  makePanel(c(0xb8b2a6, 1), 6, 4, 0, 6, 0.5, Math.PI / 2);
+  // Long, bright strip softboxes near the horizon: these draw the crisp
+  // highlight lines along the curved rim, fallboard and lid edge that make
+  // black lacquer read as glossy.
+  makePanel(c(0xfff4e6, 3.2), 9, 0.7, 0, 1.2, 7, 0); // front
+  makePanel(c(0xfff4e6, 2.4), 9, 0.6, -7, 0.6, 0.5, 0, Math.PI / 2); // left
+  makePanel(c(0xfff4e6, 2.0), 9, 0.6, 7, 1.6, -0.5, 0, Math.PI / 2); // right
+  makePanel(c(0xe8e2d6, 1.4), 9, 0.6, 0, 1.0, -7, 0); // rear
+  // Low strip toward the hero camera (front-right): the vertical rim mirrors
+  // directions ~15° below the horizon from that view, so this draws the long
+  // highlight down the curved side instead of leaving it a flat silhouette.
+  makePanel(c(0xfff4e6, 1.8), 8, 1.0, 5, -1.4, 5, 0, Math.PI / 4);
+  // Large soft side fills for gentle broad shape on the curved rim.
+  makePanel(c(0x8a857c, 1), 6, 4, -6.8, 3.6, -1.5, 0, Math.PI / 2);
+  makePanel(c(0x8a857c, 1), 6, 4, 6.8, 3.6, 2, 0, Math.PI / 2);
+
+  // 0.04 is PMREM's max blur (20 samples); larger sigmas clip with a warning.
   return pmrem.fromScene(envScene, 0.04).texture;
 }
 
@@ -1066,7 +1133,8 @@ function roomEnvironment(pmrem) {
 export function setupEnvironment(renderer, scene) {
   const pmrem = new THREE.PMREMGenerator(renderer);
   scene.environment = roomEnvironment(pmrem);
-  scene.background = radialBackground("#c9c6bf", "#9a9ca2", "#33363d");
+  scene.background = null;
+  scene.add(createStudioDome());
   // Fog was flattening surface detail — keep backdrop gradient only.
   scene.fog = null;
   pmrem.dispose();
@@ -1106,7 +1174,9 @@ export function disposeContactShadow(shadow) {
 }
 
 /**
- * Lighting as if you're seated at the piano: room fill + lamp from your viewpoint.
+ * Even soft showroom lighting: ambient + hemisphere carry most of the level;
+ * a high ceiling key and side fill add gentle shape; wide soft key wash on the
+ * keyboard. No camera-follow lamps by default (avoids hotspots while orbiting).
  * @returns {{
  *   lights: {
  *     ambient: THREE.AmbientLight,
@@ -1132,42 +1202,45 @@ export function disposeContactShadow(shadow) {
 export function setupSeatedViewerLights(scene) {
   const d = LIGHTING_DEFAULTS;
 
-  // Neutral fill (was cool 0xf2f4fa / hemi ground 0x9098a8 / room 0xe8ecf8) so
-  // diffuse parts and the matte body don't pick up a blue tint — Blender's world
-  // and lamps are neutral. Warm key/viewer lights are kept warm.
-  const ambient = new THREE.AmbientLight(0xf4f2ee, d.ambientIntensity);
+  // Neutral-warm fill so diffuse parts don't pick up a blue cast.
+  const ambient = new THREE.AmbientLight(0xf6f4f0, d.ambientIntensity);
   scene.add(ambient);
 
-  const hemi = new THREE.HemisphereLight(0xfaf8f4, 0x9a988f, d.hemiIntensity);
+  // Soft sky / floor bounce — main evenness of the scene.
+  const hemi = new THREE.HemisphereLight(0xfaf8f4, 0xa8a59c, d.hemiIntensity);
   hemi.position.set(...d.hemiPosition);
   scene.add(hemi);
 
+  // High, soft overhead key — only shadow caster so contact stays single and soft.
   const ceiling = new THREE.DirectionalLight(0xfffaf5, d.ceilingIntensity);
   ceiling.position.set(...d.ceilingPosition);
-  // Overhead key light casts the real cast shadow: the raised lid onto the
-  // soundboard, struck keys onto the keybed. Tight ortho frustum around the
-  // ~1.5 x 1.8 m Model O footprint so the 2k map stays crisp. normalBias clears
-  // the soundboard/keytop self-shadow acne without detaching the contact line.
   ceiling.castShadow = true;
   ceiling.shadow.mapSize.set(2048, 2048);
+  // PCFSoftShadowMap uses radius to widen the filter kernel.
+  ceiling.shadow.radius = 6;
+  ceiling.shadow.blurSamples = 12;
   const sc = ceiling.shadow.camera;
-  sc.left = -1.4;
-  sc.right = 1.4;
-  sc.top = 1.6;
-  sc.bottom = -1.6;
+  // Slightly wider frustum softens the lid/keybed umbra edge.
+  sc.left = -2.0;
+  sc.right = 2.0;
+  sc.top = 2.2;
+  sc.bottom = -2.2;
   sc.near = 0.5;
-  sc.far = 9;
+  sc.far = 14;
   sc.updateProjectionMatrix();
-  ceiling.shadow.bias = -0.0003;
-  ceiling.shadow.normalBias = 0.02;
+  ceiling.shadow.bias = -0.0004;
+  ceiling.shadow.normalBias = 0.035;
   scene.add(ceiling);
   // DirectionalLight aims at its target (default origin); the piano sits at
   // origin, so no target move is needed.
 
-  const room = new THREE.DirectionalLight(0xefece6, d.roomIntensity);
+  // Side / front fill — no shadows (keeps shading soft and even).
+  const room = new THREE.DirectionalLight(0xf0ede6, d.roomIntensity);
   room.position.set(...d.roomPosition);
+  room.castShadow = false;
   scene.add(room);
 
+  // Fixed front point fill — no shadows (avoids a second hard contact line).
   const viewerLight = new THREE.PointLight(
     0xfff6ea,
     d.viewerIntensity,
@@ -1175,15 +1248,12 @@ export function setupSeatedViewerLights(scene) {
     d.viewerDecay,
   );
   viewerLight.position.set(...d.viewerPosition);
-  viewerLight.castShadow = true;
-  viewerLight.shadow.mapSize.set(1024, 1024);
-  viewerLight.shadow.bias = -0.0002;
-  viewerLight.shadow.normalBias = 0.012;
+  viewerLight.castShadow = false;
   scene.add(viewerLight);
 
   const keySpotAngle = THREE.MathUtils.degToRad(d.keySpotAngleDeg);
   const keySpot = new THREE.SpotLight(
-    0xffffff,
+    0xfffaf5,
     d.keySpotIntensity,
     d.keySpotDistance,
     keySpotAngle,
@@ -1191,6 +1261,7 @@ export function setupSeatedViewerLights(scene) {
     d.keySpotDecay,
   );
   keySpot.position.set(...d.keySpotPosition);
+  keySpot.castShadow = false;
   const keySpotTarget = new THREE.Object3D();
   keySpotTarget.position.set(...d.keySpotTarget);
   scene.add(keySpotTarget);
@@ -1311,9 +1382,10 @@ export function createLightHelpers(scene, lights) {
 }
 
 /**
- * Custom Reflector shader: a true planar mirror, but dimmed toward a dark floor
- * base and faded out with distance so the piano reflection reads near the center
- * while the far floor melts into the backdrop (no hard disc-edge horizon).
+ * Custom Reflector shader: a true planar mirror over a dark studio floor. The
+ * reflection fades out with distance, a soft pool brightens the floor under the
+ * piano, and the far floor blends into the dome's horizon color so the floor
+ * never meets the backdrop in a hard edge.
  * `color`, `tDiffuse`, `textureMatrix` are required by the Reflector constructor.
  */
 const STUDIO_FLOOR_SHADER = {
@@ -1322,10 +1394,15 @@ const STUDIO_FLOOR_SHADER = {
     color: { value: null },
     tDiffuse: { value: null },
     textureMatrix: { value: null },
-    uFloorColor: { value: new THREE.Color(0x23262c) },
-    uReflStrength: { value: 0.55 },
-    uFadeStart: { value: 3.0 },
-    uFadeEnd: { value: 14.0 },
+    uFloorColor: { value: STUDIO_PALETTE.floor },
+    uHorizonColor: { value: STUDIO_PALETTE.horizon },
+    uReflStrength: { value: 0.38 },
+    uFadeStart: { value: 1.5 },
+    uFadeEnd: { value: 7.0 },
+    uPoolStrength: { value: 0.9 },
+    uPoolRadius: { value: 3.2 },
+    uHorizonStart: { value: 4.0 },
+    uHorizonEnd: { value: 24.0 },
   },
   vertexShader: /* glsl */ `
     uniform mat4 textureMatrix;
@@ -1347,13 +1424,19 @@ const STUDIO_FLOOR_SHADER = {
     uniform vec3 color;
     uniform sampler2D tDiffuse;
     uniform vec3 uFloorColor;
+    uniform vec3 uHorizonColor;
     uniform float uReflStrength;
     uniform float uFadeStart;
     uniform float uFadeEnd;
+    uniform float uPoolStrength;
+    uniform float uPoolRadius;
+    uniform float uHorizonStart;
+    uniform float uHorizonEnd;
     varying vec4 vUv;
     varying float vDist;
 
     #include <logdepthbuf_pars_fragment>
+    ${DITHER_GLSL}
 
     float blendOverlay( float base, float blend ) {
       return( base < 0.5 ? ( 2.0 * base * blend ) : ( 1.0 - 2.0 * ( 1.0 - base ) * ( 1.0 - blend ) ) );
@@ -1364,11 +1447,21 @@ const STUDIO_FLOOR_SHADER = {
 
     void main() {
       #include <logdepthbuf_fragment>
-      vec4 base = texture2DProj( tDiffuse, vUv );
-      vec3 refl = blendOverlay( base.rgb, color );
+      // Soft light pool under the piano (gaussian-ish falloff).
+      float pool = exp( -2.5 * ( vDist * vDist ) / ( uPoolRadius * uPoolRadius ) );
+      vec3 floorCol = uFloorColor * ( 1.0 + uPoolStrength * pool );
+      // Far field sweeps up into the dome's horizon color.
+      floorCol = mix( floorCol, uHorizonColor, smoothstep( uHorizonStart, uHorizonEnd, vDist ) );
       float fade = 1.0 - smoothstep( uFadeStart, uFadeEnd, vDist );
-      vec3 col = mix( uFloorColor, refl, uReflStrength * fade );
-      gl_FragColor = vec4( col, 1.0 );
+      vec3 col = floorCol;
+      // Only sample the mirror where it contributes: on the huge floor quads the
+      // projective lookup can produce NaN far out, and NaN * 0 still poisons the
+      // mix (showed as stray black dashes on the floor).
+      if ( fade > 0.0 ) {
+        vec3 refl = blendOverlay( texture2DProj( tDiffuse, vUv ).rgb, color );
+        col = mix( floorCol, refl, uReflStrength * fade );
+      }
+      gl_FragColor = vec4( col + studioDither( gl_FragCoord.xy ), 1.0 );
       #include <tonemapping_fragment>
       #include <colorspace_fragment>
     }`,
@@ -1389,11 +1482,20 @@ export const STUDIO_FLOOR_Y = -0.003;
  */
 export const CONTACT_SHADOW_Y = 0.0015;
 
+/**
+ * Floor-mirror resolution relative to the canvas. The reflection is dimmed and
+ * distance-faded, so half resolution is visually indistinguishable while
+ * cutting the mirror pass (~40% of GPU frame time at full res) roughly in half.
+ */
+export const FLOOR_REFLECTION_SCALE = 0.5;
+
 export function createStudioGround(scene) {
-  const dpr = Math.min(window.devicePixelRatio, 2);
-  const floor = new Reflector(new THREE.PlaneGeometry(80, 80), {
-    textureWidth: window.innerWidth * dpr,
-    textureHeight: window.innerHeight * dpr,
+  const scale = Math.min(window.devicePixelRatio, 2) * FLOOR_REFLECTION_SCALE;
+  // Subdivided so the projective reflection UVs and log depth interpolate
+  // accurately (two 80 m triangles spanning behind the camera don't).
+  const floor = new Reflector(new THREE.PlaneGeometry(80, 80, 40, 40), {
+    textureWidth: window.innerWidth * scale,
+    textureHeight: window.innerHeight * scale,
     // Higher bias reduces reflection-plane acne under the body/casters.
     clipBias: 0.01,
     // Neutral tint: dimming is handled by the shader's mix toward uFloorColor.

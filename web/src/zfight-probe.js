@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { BATCH_SOURCE_LAYER } from "./batching.js";
 import { debugGroup, debugToggle } from "./debug-ui.js";
 
 const COPLANAR_MM = 2;
@@ -21,6 +22,7 @@ export function createZfightProbe(opts) {
   const { camera, renderer, scene, getModel, mount } = opts;
 
   const raycaster = new THREE.Raycaster();
+  raycaster.layers.enable(BATCH_SOURCE_LAYER);
   const pointer = new THREE.Vector2();
 
   const panel = document.createElement("details");
