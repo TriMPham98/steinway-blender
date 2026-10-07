@@ -9,9 +9,18 @@ import * as THREE from "three";
  * THREE.BatchedMesh, which draws them all in a single multi-draw call with
  * per-instance matrices and per-instance frustum culling.
  *
+ * Parts that repeat one shared geometry + material many times (the action's
+ * wippens, jacks, hammers in size groups, damper heads...) go to a
+ * THREE.InstancedMesh first: one plain instanced draw instead of a multi-draw
+ * entry per part, which ANGLE's Metal backend replays as individual draws
+ * (~1,800 action sub-draws per pass cost ~3 ms/frame on an M1 Pro).
+ *
+ * Meshes tagged `userData.batchGroup` only merge within their group, so a group
+ * (e.g. the piano action) can be shown or hidden as a whole — see `drawsIn`.
+ *
  * The original meshes stay in the graph but move to BATCH_SOURCE_LAYER, which
  * no camera renders: the rigs (piano.js, action.js, case.js) keep posing them
- * and `sync()` copies their world matrices into the batch. A layer — not
+ * and `sync()` copies their world matrices into the batch / instances. A layer — not
  * `visible = false` — because hiding a mesh also hides its children (the lid
  * mesh parents the hinges and prop), while layers are per-object. Raycasters
  * that pick model parts must enable this layer.
@@ -38,6 +47,8 @@ function isBatchable(mesh) {
   if (!mesh.isMesh || mesh.isInstancedMesh || mesh.isSkinnedMesh || mesh.isBatchedMesh) {
     return false;
   }
+  // Parts that fade or toggle on their own (the removable music desk).
+  if (mesh.userData.noBatch) return false;
   const mat = mesh.material;
   if (!mat || Array.isArray(mat) || mat.transparent) return false;
   // Custom draw ordering / hooks don't survive merging.
@@ -54,12 +65,59 @@ function isBatchable(mesh) {
  * (which must have an identity world transform, e.g. the scene).
  * @param {THREE.Object3D} root
  * @param {THREE.Object3D} parent
- * @param {{ minGroupSize?: number }} [opts]
- * @returns {{ batches: THREE.BatchedMesh[], meshCount: number, sync: () => void }}
+ * @param {{ minGroupSize?: number, minInstances?: number }} [opts]
+ * @returns {{ batches: THREE.BatchedMesh[], instanced: THREE.InstancedMesh[], meshCount: number, sync: () => void }}
  */
-export function batchMeshes(root, parent, { minGroupSize = 2 } = {}) {
+export function batchMeshes(root, parent, { minGroupSize = 2, minInstances = 8 } = {}) {
   root.updateMatrixWorld(true);
 
+  // Pass 1: shared geometry + material repeated often enough -> instancing.
+  /** @type {Map<string, THREE.Mesh[]>} */
+  const repeats = new Map();
+  root.traverse((obj) => {
+    if (!isBatchable(obj)) return;
+    const key = [
+      obj.userData.batchGroup ?? "",
+      obj.geometry.uuid,
+      obj.material.uuid,
+      obj.castShadow ? "c" : "-",
+      obj.receiveShadow ? "r" : "-",
+    ].join("|");
+    const list = repeats.get(key);
+    if (list) list.push(obj);
+    else repeats.set(key, [obj]);
+  });
+  /** @type {THREE.InstancedMesh[]} */
+  const instanced = [];
+  /** Flat [instancedMesh, index, mesh] records for sync(). */
+  const instRecords = [];
+  const sphere = new THREE.Sphere();
+  let meshCount = 0;
+  for (const meshes of repeats.values()) {
+    if (meshes.length < minInstances) continue;
+    const first = meshes[0];
+    const inst = new THREE.InstancedMesh(first.geometry, first.material, meshes.length);
+    inst.name = `Instanced_${first.material.name || "material"}`;
+    inst.userData.batchGroup = first.userData.batchGroup;
+    inst.castShadow = first.castShadow;
+    inst.receiveShadow = first.receiveShadow;
+    meshes.forEach((mesh, i) => {
+      inst.setMatrixAt(i, mesh.matrixWorld);
+      instRecords.push(inst, i, mesh);
+      mesh.layers.set(BATCH_SOURCE_LAYER);
+      meshCount++;
+    });
+    inst.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    // Moving parts travel a few cm from where they were measured; pad the
+    // culling sphere rather than recomputing it every pose frame.
+    inst.computeBoundingSphere();
+    sphere.copy(inst.boundingSphere);
+    inst.boundingSphere.radius = sphere.radius + 0.1;
+    parent.add(inst);
+    instanced.push(inst);
+  }
+
+  // Pass 2: everything else folds into per-material BatchedMeshes.
   /** @type {Map<string, THREE.Mesh[]>} */
   const groups = new Map();
   root.traverse((obj) => {
@@ -68,6 +126,7 @@ export function batchMeshes(root, parent, { minGroupSize = 2 } = {}) {
     const sig = attributeSignature(geo);
     if (sig == null) return;
     const key = [
+      obj.userData.batchGroup ?? "",
       obj.material.uuid,
       sig,
       geo.index ? "i" : "n",
@@ -83,7 +142,6 @@ export function batchMeshes(root, parent, { minGroupSize = 2 } = {}) {
   const batches = [];
   /** Flat [batch, instanceId, mesh] records for sync(). */
   const records = [];
-  let meshCount = 0;
 
   for (const meshes of groups.values()) {
     if (meshes.length < minGroupSize) continue;
@@ -104,6 +162,7 @@ export function batchMeshes(root, parent, { minGroupSize = 2 } = {}) {
       first.material,
     );
     batch.name = `Batch_${first.material.name || "material"}`;
+    batch.userData.batchGroup = first.userData.batchGroup;
     batch.castShadow = first.castShadow;
     batch.receiveShadow = first.receiveShadow;
     // Opaque-only batches: per-instance depth sorting buys nothing here.
@@ -128,13 +187,22 @@ export function batchMeshes(root, parent, { minGroupSize = 2 } = {}) {
 
   return {
     batches,
+    instanced,
     meshCount,
-    /** Copy the hidden source meshes' current world matrices into the batches. */
+    /** @param {string} group @returns {THREE.Mesh[]} draws built from that group */
+    drawsIn(group) {
+      return [...instanced, ...batches].filter((d) => d.userData.batchGroup === group);
+    },
+    /** Copy the hidden source meshes' current world matrices into the draws. */
     sync() {
       root.updateMatrixWorld();
       for (let i = 0; i < records.length; i += 3) {
         records[i].setMatrixAt(records[i + 1], records[i + 2].matrixWorld);
       }
+      for (let i = 0; i < instRecords.length; i += 3) {
+        instRecords[i].setMatrixAt(instRecords[i + 1], instRecords[i + 2].matrixWorld);
+      }
+      for (const inst of instanced) inst.instanceMatrix.needsUpdate = true;
     },
   };
 }

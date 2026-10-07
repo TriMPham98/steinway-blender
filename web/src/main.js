@@ -4,6 +4,8 @@ import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { PianoController } from "./piano.js";
 import { buildCaseRig, createCaseState, pickLidHit, stepCase } from "./case.js";
+import { buildMusicDesk, createDeskState, stepDesk } from "./desk.js";
+import { ACTION_BATCH_GROUP, tagActionMeshes } from "./action.js";
 import { LiveSession } from "./live.js";
 import { PianoAudio } from "./audio.js";
 import { MIDI_HIGH, MIDI_LOW } from "./anim.js";
@@ -55,6 +57,7 @@ const ui = {
   viewSeated: document.getElementById("view-seated"),
   caseControls: document.getElementById("case-controls"),
   lidToggle: document.getElementById("btn-lid-toggle"),
+  deskToggle: document.getElementById("btn-desk-toggle"),
   menuToggle: document.getElementById("menu-toggle"),
   drawer: document.getElementById("drawer"),
   drawerClose: document.getElementById("drawer-close"),
@@ -133,6 +136,11 @@ raycaster.layers.enable(BATCH_SOURCE_LAYER);
 const pointer = new THREE.Vector2();
 let piano = null;
 let live = null;
+/** @type {ReturnType<typeof buildMusicDesk> | null} */
+let musicDesk = null;
+let deskState = createDeskState(false);
+/** Draws holding the piano action (culled while the music desk covers it). */
+let actionDraws = [];
 /** @type {ReturnType<typeof buildCaseRig> | null} */
 let caseRig = null;
 /** @type {ReturnType<typeof createCaseState> | null} */
@@ -503,8 +511,37 @@ function toggleLid() {
   syncLidToggleLabel();
 }
 
+function syncDeskToggleLabel() {
+  if (!ui.deskToggle) return;
+  const removed = deskState.target > 0.5;
+  ui.deskToggle.textContent = removed ? "Replace music desk" : "Remove music desk";
+  ui.deskToggle.setAttribute("aria-pressed", removed ? "true" : "false");
+}
+
+/**
+ * The action (~1,000 parts) sits under the plate, strings and music desk; with
+ * the desk in place none of it can be seen, yet drawing it costs ~4 ms/frame on
+ * an M1 Pro. Draw it only while the desk is off (or sliding).
+ */
+function syncActionVisibility() {
+  const show = !musicDesk?.available || deskState.current > 0;
+  for (const d of actionDraws) d.visible = show;
+}
+
+/** Take the music desk off to watch the hammers, dampers and action work. */
+function toggleDesk() {
+  if (!musicDesk?.available) return;
+  deskState.target = deskState.target > 0.5 ? 0 : 1;
+  syncDeskToggleLabel();
+}
+
 function bindCaseControls() {
   ui.lidToggle?.addEventListener("click", toggleLid);
+  if (musicDesk?.available && ui.deskToggle) {
+    ui.deskToggle.hidden = false;
+    ui.deskToggle.addEventListener("click", toggleDesk);
+    syncDeskToggleLabel();
+  }
 }
 
 function setRaycasterFromClient(clientX, clientY) {
@@ -765,9 +802,17 @@ async function init() {
   prepInteriorStack(model);
   setupShadows(model);
   contactShadow = createContactShadow(scene, model);
+  // Before batching: the desk opts its meshes out so it can fade on its own,
+  // and the action gets draws of its own so it can be culled as a whole.
+  musicDesk = buildMusicDesk(model);
+  tagActionMeshes(model);
   modelBatch = batchMeshes(model, scene);
+  actionDraws = modelBatch.drawsIn(ACTION_BATCH_GROUP);
+  syncActionVisibility();
   console.info(
-    `[steinway] batched ${modelBatch.meshCount} meshes into ${modelBatch.batches.length} draws`,
+    `[steinway] batched ${modelBatch.meshCount} meshes into ` +
+      `${modelBatch.batches.length + modelBatch.instanced.length} draws ` +
+      `(${modelBatch.instanced.length} instanced)`,
   );
   requestRender({ poseChanged: true });
 
@@ -856,6 +901,10 @@ async function init() {
 
   piano = new PianoController(model, manifest);
   piano.applySettings(feelSettings);
+  if (import.meta.env.DEV) {
+    window.__piano = piano;
+    window.__toggleDesk = toggleDesk;
+  }
 
   caseRig = buildCaseRig(model, manifest.case);
   if (caseRig.available) {
@@ -1084,6 +1133,10 @@ function animate() {
     posed = true;
   }
   if (caseRig && caseState && stepCase(caseState, caseRig, dt)) posed = true;
+  if (musicDesk && stepDesk(deskState, musicDesk, dt)) {
+    posed = true;
+    syncActionVisibility();
+  }
   if (posed) poseTail = POSE_TAIL_S;
 
   const tweening = cameraTween.active;

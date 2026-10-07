@@ -2,13 +2,15 @@
 
 Two fixes to the imported harp:
 
-**Plate bays.** ``Brass_Sound_Works.002`` models its front section as one giant
-flat n-gon at z = 0.850 reaching back to y = -0.392 - solid gold under the whole
-strike band and damper band, where a real Steinway plate ends at the capo bar
-with open bays behind it. The builder bisects that single face along the capo
-line (just in front of the hammer strike line) and deletes the rear portion, so
-hammers and damper wires work in open air over the soundboard, exactly like the
-real plate. The struts and raised bars above the web are untouched.
+**Plate bays.** ``Brass_Sound_Works.002`` models its front section as a closed
+slab - a flat n-gon floor at z = 0.850 and a top skin at z ~0.875 - reaching
+back under the whole strike band and damper band (in the treble the strings
+lay on gold), where a real Steinway plate ends at the capo bar with open bays
+behind it. The builder bisects floor and skin along the capo line (just in
+front of the hammer strike line), deletes everything behind it and walls up
+the capo edge, so hammers strike the strings and damper wires rise in open air
+over the soundboard, exactly like the real plate. The struts and raised bars
+above the skin are untouched.
 
 **Pins.** The stand-in pin field served 51 strings. This builds one tuning pin
 per physical string (225 for the Model-O-style scale; straight ranks parallel
@@ -32,7 +34,9 @@ OLD_PINS = "String_Pins"
 TUNING_PINS = "Tuning_Pins"
 HITCH_PINS = "Hitch_Pins"
 CAPO_MARK = "steinway_capo_cut"
-CAPO_VERSION = 4
+CAPO_VERSION = 5
+SKIN_Z = (0.866, 0.8825)  # flat plate skin (top of the closed pin-field slab)
+SKIN_BACK = 0.20         # skin opened this far behind the capo line
 CAPO_SETBACK = 0.018     # capo (web cut) line sits this far in front of strike
 LIP_TRIM = 0.016         # raised front-slab rear edge: this far behind strike
 PIN_TRIM = (strings_mod.RANK_REL0
@@ -147,6 +151,60 @@ def _trim_damper_lip(bm, mw, a, b):
     return len(new)
 
 
+def _open_skin(bm, mw, a, b):
+    """Remove the flat top skin behind the capo line ``y = a + b x``.
+
+    The skin faces straddling the line are bisected first so the pin field in
+    front keeps a straight edge, which is then walled down to the floor level
+    (the capo bar's face). Raised struts (anything reaching above the skin)
+    are kept.
+    """
+    def rel(p):
+        return p.y - (a + b * p.x)
+
+    def in_skin(f, lo=SKIN_Z[0]):
+        return all(lo <= (mw @ v.co).z <= SKIN_Z[1] for v in f.verts)
+
+    inv3 = mw.to_3x3().transposed()
+    straddle = [f for f in bm.faces if in_skin(f)
+                and min(rel(mw @ v.co) for v in f.verts) < -1e-5 < 1e-5
+                < max(rel(mw @ v.co) for v in f.verts)]
+    if straddle:
+        vs, es = set(), set()
+        for f in straddle:
+            vs.update(f.verts)
+            es.update(f.edges)
+        bmesh.ops.bisect_plane(
+            bm, geom=straddle + list(vs) + list(es),
+            plane_co=mw.inverted() @ Vector((0.0, a, 0.875)),
+            plane_no=(inv3 @ Vector((-b, 1.0, 0.0))).normalized())
+    doomed = []
+    for f in bm.faces:
+        c = mw @ f.calc_center_median()
+        if not (1e-4 < rel(c) < SKIN_BACK):
+            continue
+        # Flat skin, plus the low walls that only ever bordered it.
+        if in_skin(f) or in_skin(f, lo=0.8490):
+            doomed.append(f)
+    mat_idx = doomed[0].material_index if doomed else 0
+    bmesh.ops.delete(bm, geom=doomed, context="FACES")
+    walled = 0
+    for e in [e for e in bm.edges if e.is_boundary]:
+        ws = [mw @ v.co for v in e.verts]
+        if not all(abs(rel(w)) < 0.0015 and SKIN_Z[0] <= w.z <= SKIN_Z[1] for w in ws):
+            continue
+        lo = [bm.verts.new(mw.inverted() @ Vector((w.x, w.y, 0.8502))) for w in ws]
+        f = bm.faces.new((e.verts[0], e.verts[1], lo[1], lo[0]))
+        f.material_index = mat_idx
+        f.normal_update()
+        # Face the open bays (the imported shell is not manifold, so no
+        # global normal recalc - orient just the new wall).
+        if (mw.to_3x3() @ f.normal).dot(Vector((-b, 1.0, 0.0))) < 0.0:
+            f.normal_flip()
+        walled += 1
+    return len(doomed), walled
+
+
 def _cut_plate_bays():
     """Open the bays: the model fakes a gold floor under the whole harp as
     flat sheets at z ~0.850 (plus the big pin-field n-gon). Everything behind
@@ -154,14 +212,23 @@ def _cut_plate_bays():
     plate = bpy.data.objects.get(PLATE)
     if plate is None:
         return "missing"
-    if plate.get(CAPO_MARK, 0) == CAPO_VERSION:
+    mark = plate.get(CAPO_MARK, 0)
+    if mark == CAPO_VERSION:
         return "already-cut"
     a, b = _capo_line()
     mw = action_mod._world_matrix(plate)
     bm = bmesh.new()
     bm.from_mesh(plate.data)
     bm.faces.ensure_lookup_table()
-    if not plate.get(CAPO_MARK):
+    if mark >= 4:
+        # Floor + lip were opened by v4; only the skin is new.
+        skin, wall = _open_skin(bm, mw, a, b)
+        bm.to_mesh(plate.data)
+        bm.free()
+        plate.data.update()
+        plate[CAPO_MARK] = CAPO_VERSION
+        return f"cut v{CAPO_VERSION} (skin: {skin} faces removed, capo walled with {wall})"
+    if not mark:
         # First pass: bisect the big pin-field n-gon along the capo line so
         # its front (under the pins) survives the sheet purge below.
         web = max(bm.faces, key=lambda f: f.calc_area())
@@ -179,12 +246,13 @@ def _cut_plate_bays():
             rear.append(f)
     bmesh.ops.delete(bm, geom=rear, context="FACES")
     walled = _trim_damper_lip(bm, mw, a + CAPO_SETBACK, b)
+    skin, wall = _open_skin(bm, mw, a, b)
     bm.to_mesh(plate.data)
     bm.free()
     plate.data.update()
     plate[CAPO_MARK] = CAPO_VERSION
     return (f"cut v{CAPO_VERSION} ({len(rear)} floor faces removed, "
-            f"lip walled with {walled} faces)")
+            f"lip walled with {walled} faces, skin {skin} faces removed)")
 
 
 def _pin_material():

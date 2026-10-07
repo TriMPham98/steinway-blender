@@ -7,6 +7,48 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 The version here tracks `version` in
 `extension/steinway_midi_piano/blender_manifest.toml`.
 
+## [0.8.0] - 2026-10-06
+
+### Changed
+- **The action is rebuilt in the real Steinway grand layout.** The v0.5 action
+  was a mirror image of a grand's: hammer pinned behind the head, wippen pinned
+  in front, backcheck ahead of the hammer. Now the hammer center pin sits in
+  front on the flange rail with the head at the strike line, the knuckle about
+  19 mm behind the pin, and the tail falling onto a backcheck at the key end.
+  The wippen is pinned at the rear with its heel on the capstan, the jack sits
+  under the knuckle with its tender at the let-off button, and the repetition
+  lever reaches forward to the drop screw. The kinematics come from one shared
+  geometry: 47 mm blow, let-off 2 mm from the string, check 16 mm below it.
+- **Action lanes are evenly spaced** (13.0 mm bass, 13.8 mm treble) instead of
+  following the uneven key centers (9–25 mm). Key sticks crank behind the balance
+  rail, string courses are re-laid on the lanes, and the lanes step over the
+  plate struts. The cast action brackets stand in those gaps.
+- **Steinway hardware:** a brass tubular action frame, hammer flanges with
+  center pins and drop screws, a let-off rail with felted buttons, a hammer rest
+  rail, a key frame (balance rail, back rail with cloth), and eight hammer sizes
+  with bores from 44 to 50.5 mm, mahogany moldings and egg-shaped felts.
+- **Damper action:** underlevers pivot behind the belly rail and reach under it
+  through a new opening in the inner rim wall, which is the real arrangement.
+  A sostenuto rod, sustain tray and guide rail with bushings are added. Wires
+  rise between the unison strings. The procedural heads have wedge felts on the
+  mono, bi- and trichords and flat felts in the upper treble.
+- **The plate's top skin is opened behind the capo line**, so treble hammers
+  now strike the strings instead of a gold sheet under them.
+
+### Performance
+- Repeated parts share mesh data in the GLB (wippens, jacks, levers,
+  underlevers, 8 hammer and 18 damper-head shapes). The damper heads dropped
+  from 396k to 13k triangles. The source GLB went from 69 MB to 50 MB and the
+  served model from 26 MB to 17 MB. Per frame, 1.72M → 1.26M triangles are drawn.
+- In the web viewer, repeated shapes draw as `InstancedMesh`. The hidden part
+  of the action is drawn only while the music desk is off.
+
+### Added
+- **Remove music desk** in the web viewer's Case controls. The desk slides out
+  and fades so you can watch the hammers and dampers.
+- Action materials keep their colors in the web viewer: felt with a sheen,
+  plus real brass, steel and iron. Before, they all fell through to dark gray.
+
 ## [0.7.6] - 2026-06-15
 
 ### Fixed

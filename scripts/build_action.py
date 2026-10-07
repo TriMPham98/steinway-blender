@@ -5,9 +5,11 @@
     $B --background assets/steinway_grand_playable.blend --python scripts/build_action.py -- \
         --out assets/steinway_grand_playable.blend
 
-Builds the full 88-note grand action (key arms, wippens, jacks, repetition
-levers, hammers, rails) into the ``Steinway_Action`` collection, rigged with
-drivers off each key's rotation (see ``steinway_midi_piano.build.action``).
+Builds the full 88-note grand action (key sticks, wippens, jacks, repetition
+levers, hammers, tubular rails on cast brackets, damper action) into the
+``Steinway_Action`` collection, rigged with drivers off each key's rotation
+(see ``steinway_midi_piano.build.action``). Run after strings/harp (or use
+``build_all.py``): the string courses sit on the action lanes.
 Without ``--out`` it is a dry run: the file is opened, built, verified, and
 nothing is written back.
 """
@@ -36,15 +38,18 @@ def main():
     print(f"[action] action line  : y = {summary['action_line'][0]} "
           f"+ {summary['action_line'][1]} * x")
     print(f"[action] strike z     : {summary['strike_z'][0]} .. {summary['strike_z'][1]}")
-    print(f"[action] shank length : {summary['shank'][0]} .. {summary['shank'][1]}")
-    print(f"[action] heel-capstan max err : {summary['heel_err']} m")
-    print(f"[action] strike max err      : {summary['strike_err']} m")
+    print(f"[action] lanes (mm)   : bass / treble pitch {summary['pitch_mm']}")
+    print(f"[action] hammer bores : {summary['bores_mm']} mm")
+    print(f"[action] meshes       : {summary['meshes']} unique")
+    print(f"[action] contact errors (mm) : {summary['errors_mm']}")
+    print(f"[action] damper lift (mm)    : {summary['damper_lift_mm']}")
     if summary["low_clearance_notes"]:
         print(f"[action] low-clearance notes : {summary['low_clearance_notes']}")
 
     assert summary["notes"] == 88, "expected an action for every key"
     assert summary["heel_err"] < 0.002, "wippen heel drifted off the capstan"
     assert summary["strike_err"] < 0.002, "hammer crown missed its strike height"
+    assert max(summary["errors_mm"].values()) < 1.5, "action contacts drifted apart"
 
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     if "--out" in argv:

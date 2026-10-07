@@ -39,9 +39,11 @@ def main():
     a = action.build()
     print(f"[all] action  : {a['notes']} notes, {a['objects']} parts, "
           f"soundboard {a['soundboard']}, {a['dampers']} dampers")
-    print(f"[all] action  : strike z {a['strike_z'][0]}..{a['strike_z'][1]}, "
-          f"heel err {a['heel_err']}, strike err {a['strike_err']}, "
-          f"damper err {a['damper_err']}")
+    print(f"[all] action  : {a['meshes']} unique meshes, lanes {a['pitch_mm']} mm, "
+          f"strike z {a['strike_z'][0]}..{a['strike_z'][1]}, "
+          f"bores {a['bores_mm']} mm, capstan rise {a['cap_rise_mm']} mm")
+    print(f"[all] action  : contact errors (mm) {a['errors_mm']}, "
+          f"damper lift (mm) {a['damper_lift_mm']}")
     if a["low_clearance_notes"]:
         print(f"[all] action  : low clearance notes {a['low_clearance_notes']}")
     c = case.build()
@@ -54,6 +56,7 @@ def main():
     assert a["heel_err"] < 0.002, "wippen heel drifted off the capstan"
     assert a["strike_err"] < 0.002, "hammer crown missed its strike height"
     assert a["damper_err"] < 0.002, "damper lift failed"
+    assert max(a["errors_mm"].values()) < 1.5, "action contacts drifted apart"
 
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     if "--out" in argv:

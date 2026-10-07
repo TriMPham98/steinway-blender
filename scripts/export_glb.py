@@ -173,6 +173,10 @@ _LID_PROP_PARTS = (
     "Lid_Support_Prop",
 )
 
+# Music desk: removable on a real Steinway (technicians slide it out to reach
+# the action and dampers). Kept separate so the viewer can take it off.
+_MUSIC_DESK = ("Music_Shelf", "Music_Rack", "Sheet_Music_Page_Holder")
+
 # Case parts driven by scene props in build/case.py — keep out of Piano_Static.
 _CASE_MOVING = frozenset({
     "Fall_Board",
@@ -190,12 +194,14 @@ _CASE_MOVING = frozenset({
     "Lid_Butt_Hinge.001",
     "Lid_Support_Cup",
     *_LID_PROP_PARTS,
+    *_MUSIC_DESK,
 })
 _CASE_TAGS = {
     "Large_Lid_Section": "lid_big",
     "Lid_Fold_Hinge": "lid_fold_hinge",
     "Fall_Board": "fallboard",
     "Lid_Support_Prop": "lid_prop",
+    **{name: "music_desk" for name in _MUSIC_DESK},
 }
 _CASE_FOLD_BACK = 3.05
 _CASE_FALL_CLOSED = 1.48

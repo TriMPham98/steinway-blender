@@ -496,6 +496,51 @@ function tuneWood(mat) {
   return mat;
 }
 
+/**
+ * Piano action materials (build/action.py `Action_*`): plain base colors with no
+ * maps. Keep the exported color — the generic fallback would paint them all
+ * dark gray — and give felt a soft sheen and the metals real reflectance.
+ */
+function tuneAction(mat, name) {
+  if (/Brass/i.test(name)) {
+    return tuneMetal(mat, 0xcaa55c, 0.3, {
+      doubleSided: false,
+      envMapIntensity: 0.8,
+      clearcoat: 0.25,
+      clearcoatRoughness: 0.25,
+    });
+  }
+  if (/Steel/i.test(name)) {
+    return tuneMetal(mat, 0xb8b8bc, 0.28, { doubleSided: false, envMapIntensity: 0.75 });
+  }
+  if (/Iron/i.test(name)) {
+    return tuneMetal(mat, 0x1e1e21, 0.45, {
+      doubleSided: false,
+      metalness: 0.6,
+      envMapIntensity: 0.6,
+    });
+  }
+  prepMaps(mat);
+  if (/Felt/i.test(name)) {
+    // Wool felt: fully rough with a faint fiber sheen at grazing angles.
+    const felt = new THREE.MeshPhysicalMaterial({
+      name: mat.name,
+      color: mat.color.clone(),
+      roughness: 1.0,
+      metalness: 0,
+      sheen: 0.8,
+      sheenRoughness: 0.75,
+      sheenColor: mat.color.clone().lerp(new THREE.Color(0xffffff), 0.35),
+      envMapIntensity: 0.6,
+    });
+    mat.dispose?.();
+    return felt;
+  }
+  mat.metalness = 0;
+  mat.envMapIntensity = /Leather/i.test(name) ? 0.7 : 0.9;
+  return mat;
+}
+
 /** Depth stack for the joined harp interior (Piano_Static material groups). */
 function applyInteriorDepthBias(mat, name) {
   if (/Bridge/i.test(name) && /wood|beech|maple/i.test(name)) {
@@ -732,29 +777,28 @@ function liftMeshWorldY(mesh, deltaY) {
 
 const STRING_LIFT = 0.005; // world metres; clears the plate/bridge under the strings
 const BRIDGE_LIFT = 0.003;
-const ACTION_STRING_LIFT_PARTS = new Set(["damper_head", "damper_tray"]);
 
 function actionExtras(obj) {
   return obj.userData?.extras ?? obj.userData ?? {};
 }
 
-/** Lift every mesh under `root` by `deltaY` in world space. */
-function liftSubtreeMeshesWorldY(root, deltaY) {
-  root.traverse((child) => {
-    if (child.isMesh) liftMeshWorldY(child, deltaY);
-  });
-}
-
 /**
  * Action dampers are exported at rest on the string plane. prepInteriorStack
  * lifts Piano_Static speaking strings for plate clearance; ride the same offset
- * on damper heads/tray so felts stay seated on the strings in the viewer.
+ * on the damper heads so felts stay seated on the strings in the viewer.
+ *
+ * Heads share geometry by size group (and carry their wire as a child), so lift
+ * the node, never the vertices — a shared buffer would be lifted once per user.
  */
 function prepActionStringPlane(root) {
+  const scale = new THREE.Vector3();
   root.traverse((obj) => {
-    const part = actionExtras(obj).action_part;
-    if (!part || !ACTION_STRING_LIFT_PARTS.has(part)) return;
-    liftSubtreeMeshesWorldY(obj, STRING_LIFT);
+    if (actionExtras(obj).action_part !== "damper_head") return;
+    if (obj.userData.stringLifted) return;
+    obj.userData.stringLifted = true;
+    obj.parent?.updateWorldMatrix(true, false);
+    const sy = obj.parent ? scale.setFromMatrixScale(obj.parent.matrixWorld).y : 1;
+    obj.position.y += STRING_LIFT / (sy || 1);
   });
 }
 
@@ -920,7 +964,9 @@ export function refineMaterials(root) {
     const name = mat.name || "";
     let next = mat;
 
-    if (/^sy_lite/i.test(name)) {
+    if (/^Action_/i.test(name)) {
+      next = tuneAction(mat, name);
+    } else if (/^sy_lite/i.test(name)) {
       next = lacquerFromExport(mat, { matte: /matte/i.test(name), lite: true });
     } else if (/^sy_/i.test(name)) {
       next = lacquerFromExport(mat, { matte: /matte/i.test(name), lite: false });

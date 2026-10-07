@@ -7,7 +7,7 @@ import subprocess
 
 import bpy
 
-from .build import retarget, action
+from .build import retarget, action, strings, harp
 from . import midi, anim
 
 _TIMER_INTERVAL = 0.01   # modal timer period (s); also the first-frame dt seed
@@ -44,9 +44,10 @@ class STEINWAY_OT_build_action(bpy.types.Operator):
     bl_idname = "steinway.build_action"
     bl_label = "Build Double Escapement"
     bl_description = (
-        "Build the 88-note grand action behind the fallboard - key arms with "
-        "capstans and backchecks, wippens, jacks, repetition levers, and felt "
-        "hammers that strike when you play"
+        "Build the 88-note Steinway grand action - key sticks with capstans "
+        "and backchecks, wippens, jacks, repetition levers, felt hammers on a "
+        "tubular action frame, and the damper action - with string courses "
+        "re-laid on the action lanes"
     )
     bl_options = {"REGISTER", "UNDO"}
 
@@ -56,6 +57,9 @@ class STEINWAY_OT_build_action(bpy.types.Operator):
 
     def execute(self, context):
         try:
+            # Courses sit on the action lanes: rebuild strings + pins first.
+            strings.build()
+            harp.build()
             summary = action.build()
         except Exception as exc:  # noqa: BLE001 - surface a clear message in the UI
             self.report({"ERROR"}, str(exc))

@@ -10,8 +10,9 @@ This builder replaces the stand-ins with a full set that keeps the model's own
 geometry: each existing string contributes a sample of the fan (front/pin end,
 rear/hitch end, height), and every new course is interpolated from those
 samples so it lands on the same pin field, hitch line, and string plane. Each
-course is anchored at its key's x on the hammer strike line, so every hammer
-of the double-escapement action sits under its own unisons.
+course is anchored on its action lane (``action._plan`` ``ax``: even spacing
+per section, like a real scale) at the hammer strike line, so every hammer and
+damper of the action sits square under its own unisons.
 
 Sections follow the model's physical layout (its bass fan is wider than a
 textbook scale): the bass/treble break falls where the model's two fans split,
@@ -379,7 +380,9 @@ def course_lines():
     courses = []
     pin_i = 0
     for n in plan["notes"]:
-        note, x = n["note"], n["x"]
+        # Courses sit on the action lanes (evenly spaced per section), not on
+        # the key centers - real keys crank behind the balance rail instead.
+        note, x = n["note"], n["ax"]
         sec = _section_of(note)
         spec = SECTIONS[sec]
         fan, anchors = (bass, bass_anchors) if sec != "tri" else (main, main_anchors)
