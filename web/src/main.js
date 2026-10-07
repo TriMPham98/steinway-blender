@@ -885,7 +885,7 @@ async function init() {
 
   studioLimits = { far: camera.far, maxDistance: controls.maxDistance };
   if (hallScene) {
-    hall = prepareHall(hallScene, model);
+    hall = prepareHall(hallScene, model, renderer.capabilities.getMaxAnisotropy());
     scene.add(hall.root);
     stageShadow = createStageShadowCatcher(model);
     scene.add(stageShadow);

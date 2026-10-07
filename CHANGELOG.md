@@ -26,6 +26,18 @@ The version here tracks `version` in
   runners and stage-shell doors. Lighting is baked per vertex in Cycles and the
   hall renders with unlit materials plus a shadow catcher for the piano; in the
   hero view it costs 7.1 ms/frame against the studio's 9.2 ms (M1 Pro, DPR 2).
+- **More realistic hall.** Generated detail textures on every surface (stage
+  boards with grain and seams, patterned carpet, damask, gold leaf, velvet,
+  plaster); seats with wooden backs, end standards and padded arms; moulded
+  tier fronts with brass sconces; a stepped proscenium architrave; beamed
+  ceiling and dome ribs; panelled stage-shell walls. The viewer adds gilt
+  reflections, a sheen on the boards, a velvet rim and lamp halos, all without
+  real-time lights. About +0.3–0.6 ms/frame (M1 Pro, DPR 2); the served hall is
+  6.2 MB (positions, normals and colours quantized).
+
+### Fixed
+- The box partitions of the First and Second Tier stood on the parquet among
+  the stalls seats instead of in the boxes.
 
 ## [0.8.0] - 2026-10-06
 

@@ -11,9 +11,13 @@ Everything is generated from code (bmesh) — no source .blend or downloads:
 * the horseshoe of First Tier and Second Tier boxes, the Dress Circle and the
   steep Balcony, each with a cream-and-gold parapet and under-tier lamps,
 * the ceiling with the oval dome and its rings of bulbs,
-* the trim that makes it read as the real room: coffered arch reveal, gilt
-  panel frames on every tier front, red damask in the boxes, ribbed ceiling
-  and dome, arched wall panels, doors with exit signs, aisle runners.
+* the trim that makes it read as the real room: stepped gilt architrave and
+  coffered arch reveal, moulded tier fronts (swept profiles) with panel frames
+  and brass sconces, red damask in the boxes, beamed ceiling and dome ribs,
+  panelled shell walls, arched wall panels, doors with exit signs, aisle
+  runners, and seats with wooden backs, standards and padded arms,
+* generated detail textures (plank grain with seams, carpet, damask, gold
+  leaf, velvet, plaster), mapped by explicit plank UVs or world box projection.
 
 Lighting is baked with Cycles into vertex colours (stage wash, front-of-house
 key, dome and under-tier lamps, bounce light and occlusion), so the viewer
@@ -53,6 +57,7 @@ TONE_ATTR = "Hall_Tone"  # per-face albedo variation (plank tones)
 BAKE_ATTR = "Hall_Bake"
 BAKE_SAMPLES = 384
 BAKE_SMOOTH = 2  # neighbour-averaging passes over the per-vertex bake
+BAKE_AMBIENT = 0.05  # added to the median-normalised bake before the roll-off
 # Large faces are split so the per-vertex bake has enough samples to resolve
 # light pools and contact shadows.
 MAX_EDGE = 1.0
@@ -91,6 +96,39 @@ TIERS = (
 )
 ROW_PITCH = 0.9
 SEAT_PITCH = 0.56
+PLANK_W, PLANK_L = 0.18, 2.4
+
+# Proscenium architrave across its 0.7 m width: (fraction from the opening
+# outward, depth proud of the proscenium wall).
+ARCHITRAVE_PROFILE = (
+    (0.0, 0.0), (0.0, 0.22), (0.06, 0.24), (0.1, 0.2), (0.12, 0.13), (0.34, 0.13),
+    (0.36, 0.19), (0.44, 0.19), (0.46, 0.1), (0.9, 0.1), (0.94, 0.05), (1.0, 0.04), (1.0, 0.0),
+)
+
+# Tier front, bottom to top: (metres toward the room, metres above the tier
+# floor, material of the segment to the next point).
+PARAPET_PROFILE = (
+    (0.00, -0.60, "Hall_Gold"),  # bead under the soffit edge
+    (0.06, -0.60, "Hall_Gold"),
+    (0.09, -0.55, "Hall_Gold"),
+    (0.07, -0.48, "Hall_Gold"),
+    (0.03, -0.45, "Hall_Plaster"),  # lower fascia
+    (0.03, 0.12, "Hall_Gold"),
+    (0.055, 0.14, "Hall_Gold"),  # gilt band
+    (0.055, 0.22, "Hall_Gold"),
+    (0.03, 0.24, "Hall_Plaster"),  # upper fascia (panel frames)
+    (0.03, 0.70, "Hall_Gold"),
+    (0.05, 0.72, "Hall_Gold"),  # ogee cornice
+    (0.10, 0.78, "Hall_Gold"),
+    (0.13, 0.85, "Hall_Gold"),
+    (0.13, 0.89, "Hall_Velvet"),  # padded rail
+    (0.11, 0.95, "Hall_Velvet"),
+    (0.06, 0.985, "Hall_Velvet"),
+    (-0.06, 0.99, "Hall_Velvet"),
+    (-0.15, 0.97, "Hall_Velvet"),
+    (-0.18, 0.95, None),
+)
+WOOD_VARIANTS = 4  # plank grain strips stacked in the stage-wood texture
 
 MATERIALS = {
     # name: (base colour (linear), metallic, roughness, emission strength)
@@ -99,12 +137,30 @@ MATERIALS = {
     "Hall_Velvet": ((0.22, 0.018, 0.022), 0.0, 0.9, 0.0),
     "Hall_Carpet": ((0.20, 0.03, 0.035), 0.0, 0.95, 0.0),
     "Hall_Stage_Wood": ((0.36, 0.20, 0.09), 0.0, 0.42, 0.0),
-    "Hall_Dark_Wood": ((0.09, 0.045, 0.025), 0.0, 0.5, 0.0),
+    "Hall_Dark_Wood": ((0.07, 0.035, 0.02), 0.0, 0.5, 0.0),
     "Hall_Fabric": ((0.25, 0.03, 0.035), 0.0, 0.85, 0.0),
+    # Seats are closed solids, kept apart so the viewer can cull their back faces.
+    "Hall_Seat_Velvet": ((0.22, 0.018, 0.022), 0.0, 0.9, 0.0),
+    "Hall_Seat_Wood": ((0.07, 0.035, 0.02), 0.0, 0.5, 0.0),
     "Hall_Bulb": ((1.0, 0.86, 0.62), 0.0, 0.4, 6.0),
     "Hall_Exit": ((1.0, 0.08, 0.04), 0.0, 0.4, 4.0),
 }
 UNBAKED = {"Hall_Bulb", "Hall_Exit"}  # self-lit: exported at full brightness
+# Detail textures, generated at build time (see make_textures):
+# material -> (metres per texture repeat for box-projected UVs, pixels).
+TEXTURES = {
+    "Hall_Plaster": (3.0, 512),
+    "Hall_Gold": (0.32, 256),
+    "Hall_Velvet": (0.45, 256),
+    "Hall_Carpet": (1.2, 512),
+    "Hall_Stage_Wood": (None, 2048),  # explicit plank UVs
+    "Hall_Dark_Wood": (1.5, 512),
+    "Hall_Fabric": (0.64, 512),
+    "Hall_Seat_Velvet": (0.45, 256),
+    "Hall_Seat_Wood": (1.5, 512),
+}
+# Materials that share another's texture image.
+TEXTURE_SOURCE = {"Hall_Seat_Velvet": "Hall_Velvet", "Hall_Seat_Wood": "Hall_Dark_Wood"}
 
 
 def _repo_root():
@@ -123,7 +179,11 @@ def smoothstep(e0, e1, x):
 
 
 class Kit:
-    """One bmesh per material; every face corner carries a Hall_Tone value."""
+    """One bmesh per material; every face corner carries a Hall_Tone value.
+
+    Faces may carry explicit UVs (stage planks); the rest are box-projected
+    in world metres by ``project_uvs`` once the room is built.
+    """
 
     def __init__(self):
         self.meshes = {}
@@ -133,18 +193,20 @@ class Kit:
         if mat not in self.meshes:
             bm = bmesh.new()
             bm.loops.layers.float_color.new(TONE_ATTR)
+            bm.loops.layers.uv.new("UVMap")
             bm.faces.layers.int.new("solid")
+            bm.faces.layers.int.new("has_uv")
             self.meshes[mat] = bm
         return self.meshes[mat]
 
-    def face(self, mat, pts, tone=1.0, smooth=False):
+    def face(self, mat, pts, tone=1.0, smooth=False, uv=None):
         """Add a face; quads longer than MAX_EDGE become a grid of quads."""
         if len(pts) == 4:
             a, b, c, d = (Vector(p) for p in pts)
             nu = min(48, math.ceil(max((b - a).length, (c - d).length) / MAX_EDGE))
             nv = min(48, math.ceil(max((d - a).length, (c - b).length) / MAX_EDGE))
             if nu * nv > 1:
-                return self._grid(mat, a, b, c, d, nu, nv, tone, smooth)
+                return self._grid(mat, a, b, c, d, nu, nv, tone, smooth, uv)
         bm = self._bm(mat)
         verts = [bm.verts.new(p) for p in pts]
         try:
@@ -153,15 +215,20 @@ class Kit:
             for v in verts:
                 bm.verts.remove(v)
             return None
-        self._finish(bm, f, tone, smooth)
+        self._finish(bm, f, tone, smooth, uv)
         return f
 
-    def _grid(self, mat, a, b, c, d, nu, nv, tone, smooth):
+    def _grid(self, mat, a, b, c, d, nu, nv, tone, smooth, uv):
         bm = self._bm(mat)
-        grid = [
-            [bm.verts.new((a.lerp(b, i / nu)).lerp(d.lerp(c, i / nu), j / nv)) for j in range(nv + 1)]
-            for i in range(nu + 1)
-        ]
+
+        def bilerp(p, i, j):
+            return (p[0].lerp(p[1], i / nu)).lerp(p[3].lerp(p[2], i / nu), j / nv)
+
+        grid = [[bm.verts.new(bilerp((a, b, c, d), i, j)) for j in range(nv + 1)] for i in range(nu + 1)]
+        uvs = None
+        if uv is not None:
+            u4 = [Vector(q) for q in uv]
+            uvs = [[bilerp(u4, i, j) for j in range(nv + 1)] for i in range(nu + 1)]
         for i in range(nu):
             for j in range(nv):
                 quad = (grid[i][j], grid[i + 1][j], grid[i + 1][j + 1], grid[i][j + 1])
@@ -169,9 +236,10 @@ class Kit:
                     f = bm.faces.new(quad)
                 except ValueError:
                     continue
-                self._finish(bm, f, tone, smooth)
+                cell = None if uvs is None else (uvs[i][j], uvs[i + 1][j], uvs[i + 1][j + 1], uvs[i][j + 1])
+                self._finish(bm, f, tone, smooth, cell)
 
-    def _finish(self, bm, f, tone, smooth):
+    def _finish(self, bm, f, tone, smooth, uv=None):
         f.smooth = smooth
         if self._solid is not None:
             # Faces of a closed solid point away from its centre.
@@ -182,6 +250,11 @@ class Kit:
         layer = bm.loops.layers.float_color[TONE_ATTR]
         for loop in f.loops:
             loop[layer] = (tone, tone, tone, 1.0)
+        if uv is not None:
+            uv_layer = bm.loops.layers.uv["UVMap"]
+            for loop, q in zip(f.loops, uv):
+                loop[uv_layer].uv = q
+            f[bm.faces.layers.int["has_uv"]] = 1
 
     def strip(self, mat, a, b, tone=1.0, smooth=False, closed=False):
         """Quads bridging two equal-length polylines."""
@@ -190,11 +263,16 @@ class Kit:
             j = (i + 1) % n
             self.face(mat, (a[i], a[j], b[j], b[i]), tone, smooth)
 
-    def box(self, mat, center, fwd, size, tone=1.0, bottom=False):
-        """Oriented box: ``fwd`` is the local +X in the XY plane, size = (x, y, z)."""
+    def box(self, mat, center, fwd, size, tone=1.0, bottom=False, tilt=0.0):
+        """Oriented box: ``fwd`` is the local +X in the XY plane, size = (x, y, z).
+
+        ``tilt`` leans the box back (radians), its top moving toward -fwd.
+        """
         fwd = Vector((fwd.x, fwd.y, 0)).normalized()
         side = Vector((-fwd.y, fwd.x, 0))
         up = Vector((0, 0, 1))
+        if tilt:
+            fwd, up = fwd * math.cos(tilt) + up * math.sin(tilt), up * math.cos(tilt) - fwd * math.sin(tilt)
         hx, hy, hz = size[0] / 2, size[1] / 2, size[2] / 2
 
         def c(sx, sy, sz):
@@ -225,6 +303,18 @@ class Kit:
             self.face("Hall_Bulb", (a, b, top))
             self.face("Hall_Bulb", (b, a, bot))
             self._solid = None
+
+    def sweep(self, path, normals, profile, smooth=False):
+        """Sweep a moulding profile along a horizontal path.
+
+        ``profile`` is a list of (d, h, mat): d metres off the path toward the
+        room (against ``normals``), h metres above the path. Each segment takes
+        the material of its first point; ``None`` leaves a gap.
+        """
+        loops = [[p - n * d + Vector((0, 0, h)) for p, n in zip(path, normals)] for d, h, _ in profile]
+        for (_, _, mat), la, lb in zip(profile, loops, loops[1:]):
+            if mat is not None:
+                self.strip(mat, la, lb, smooth=smooth)
 
 
 # --- 2D helpers -------------------------------------------------------------
@@ -419,10 +509,37 @@ def add_door(kit, a, b, floor, height=2.1, exit_sign=False):
 
 
 def add_seat(kit, base, facing, tone=1.0):
-    """A theatre seat: cushion box + upholstered back, gilt-free and low-poly."""
+    """A theatre seat: sprung cushion, a raked upholstered back on a wooden
+    shell. Arms and end standards come from ``add_seat_row``."""
     f = Vector((facing.x, facing.y, 0)).normalized()
-    kit.box("Hall_Velvet", base + f * 0.05 + Vector((0, 0, 0.42)), f, (0.44, 0.5, 0.1), tone)
-    kit.box("Hall_Velvet", base - f * 0.22 + Vector((0, 0, 0.5)), f, (0.09, 0.52, 1.0), tone)
+    up = Vector((0, 0, 1))
+    kit.box("Hall_Seat_Velvet", base + f * 0.06 + up * 0.43, f, (0.46, 0.48, 0.11), tone, tilt=0.06)
+    kit.box("Hall_Seat_Velvet", base - f * 0.19 + up * 0.8, f, (0.09, 0.47, 0.6), tone, tilt=0.2)
+    kit.box("Hall_Seat_Wood", base - f * 0.27 + up * 0.74, f, (0.035, 0.5, 0.76), tilt=0.2)
+
+
+def add_seat_row(kit, seats, tone=1.0):
+    """Seats in order along a row, plus a wooden standard with a padded arm
+    between each pair and at both ends of every unbroken run."""
+    up = Vector((0, 0, 1))
+    runs, run = [], []
+    for p, facing in seats:
+        if run and (p - run[-1][0]).length > SEAT_PITCH * 1.5:
+            runs.append(run)
+            run = []
+        run.append((p, facing))
+    if run:
+        runs.append(run)
+    for run in runs:
+        for p, facing in run:
+            add_seat(kit, p, facing, tone)
+        ends = [run[0][0] * 1.5 - run[1][0] * 0.5, run[-1][0] * 1.5 - run[-2][0] * 0.5] if len(run) > 1 else []
+        arms = [(a[0] + b[0]) / 2 for a, b in zip(run, run[1:])] + ends
+        for i, p in enumerate(arms):
+            f = run[min(i, len(run) - 1)][1]
+            f = Vector((f.x, f.y, 0)).normalized()
+            kit.box("Hall_Seat_Wood", p - f * 0.04 + up * 0.31, f, (0.5, 0.045, 0.62))
+            kit.box("Hall_Seat_Velvet", p - f * 0.02 + up * 0.645, f, (0.46, 0.07, 0.05), tone)
 
 
 # --- Building blocks --------------------------------------------------------
@@ -446,9 +563,10 @@ def build_stage(kit):
         t = (1 - abs(y) / ARCH_HALF_W) / (1 - SHELL_TAPER_Y)
         return max(STAGE_BACK_X, p - (p - STAGE_BACK_X) * t)
 
-    # Planks run up- and downstage, staggered, each with its own tone. Their
-    # ends are cut along the shell walls and the curved lip.
-    plank_w, plank_l = 0.18, 2.4
+    # Planks run up- and downstage, staggered, each with its own tone and one
+    # of the WOOD_VARIANTS grain strips of the texture (whose edges draw the
+    # seams). Their ends are cut along the shell walls and the curved lip.
+    plank_w, plank_l = PLANK_W, PLANK_L
     n_planks = int(2 * ARCH_HALF_W / plank_w)
     for i in range(n_planks):
         y0 = -ARCH_HALF_W + i * plank_w
@@ -459,12 +577,20 @@ def build_stage(kit):
             xa0, xa1 = max(x, shell_x(y0)), max(x, shell_x(y1))
             xb0, xb1 = min(x1, apron_x(y0)), min(x1, apron_x(y1))
             if xb0 - xa0 > 0.02 and xb1 - xa1 > 0.02:
-                k = 0.82 + 0.3 * rnd.random()
+                k = 0.9 + 0.18 * rnd.random()
+                lane = rnd.randrange(WOOD_VARIANTS)
+                flip = rnd.random() < 0.5  # turn some boards end for end
+
+                def uv(px, py, x=x, y0=y0, lane=lane, flip=flip):
+                    u = (px - x) / plank_l
+                    return (1 - u if flip else u, (lane + (py - y0) / plank_w) / WOOD_VARIANTS)
+
                 kit.face(
                     "Hall_Stage_Wood",
                     [Vector((xa0, y0, STAGE_TOP)), Vector((xb0, y0, STAGE_TOP)),
                      Vector((xb1, y1, STAGE_TOP)), Vector((xa1, y1, STAGE_TOP))],
                     k,
+                    uv=[uv(xa0, y0), uv(xb0, y0), uv(xb1, y1), uv(xa1, y1)],
                 )
             x = x1
 
@@ -508,6 +634,12 @@ def build_back_wall(kit, back):
                                   q.copy(), p.copy()])
 
 
+def shell_half_w(x):
+    """Half-width of the tapering stage shell at depth ``x``."""
+    t = (PROSC_X - REVEAL - x) / (PROSC_X - REVEAL - STAGE_BACK_X)
+    return ARCH_HALF_W * (1 - t * (1 - SHELL_TAPER_Y))
+
+
 def build_proscenium_and_shell(kit):
     opening = arch_outline(ARCH_HALF_W, ARCH_SPRING, ARCH_RISE)
     frame = [(-HALL_HALF_W, PARQUET_Z - 0.05), (HALL_HALF_W, PARQUET_Z - 0.05),
@@ -524,10 +656,15 @@ def build_proscenium_and_shell(kit):
     # Its foot runs on down to the parquet beside the stage.
     gilt = arch_outline(ARCH_HALF_W + 0.7, ARCH_SPRING, ARCH_RISE + 0.7, bottom=PARQUET_Z)
     a, b = ring(opening, gilt, center)
-    kit.strip("Hall_Gold", yz(a, PROSC_X + 0.04), yz(b, PROSC_X + 0.04), closed=True)
+    # Stepped across its width (fraction from the opening out, depth into the
+    # house) so the bands catch light and shadow like a carved architrave.
+    loops = [[Vector((PROSC_X + dx, ya + (yb - ya) * t, za + (zb - za) * t))
+              for (ya, za), (yb, zb) in zip(a, b)] for t, dx in ARCHITRAVE_PROFILE]
+    for la, lb in zip(loops, loops[1:]):
+        kit.strip("Hall_Gold", la, lb, closed=True)
     # A cartouche at the crown.
-    kit.box("Hall_Gold", Vector((PROSC_X + 0.12, 0, ARCH_SPRING + ARCH_RISE + 1.3)),
-            Vector((1, 0, 0)), (0.2, 2.4, 1.6))
+    kit.box("Hall_Gold", Vector((PROSC_X + 0.17, 0, ARCH_SPRING + ARCH_RISE + 1.3)),
+            Vector((1, 0, 0)), (0.3, 2.4, 1.6))
 
     # Reveal, then the vaulted shell narrowing to the back wall.
     profile = arch_outline(ARCH_HALF_W, ARCH_SPRING, ARCH_RISE, closed=False)
@@ -562,6 +699,19 @@ def build_proscenium_and_shell(kit):
             kit.box("Hall_Plaster", c, Vector((1, 0, 0)), (0.5, 0.12, hz))
             kit.box("Hall_Gold", Vector((x, sign * (hw - 0.08), hz - 0.25)),
                     Vector((1, 0, 0)), (0.62, 0.18, 0.5))
+    # Raised panels between the pilasters, framed in gilt (the last bay
+    # upstage holds the doors).
+    for i in range(3):
+        x0 = PROSC_X - REVEAL - 1.6 - i * 2.3 - 0.35
+        x1 = x0 - 1.6
+        for sign in (-1, 1):
+            pa = Vector((x0, sign * (shell_half_w(x0) - 0.02), 0))
+            pb = Vector((x1, sign * (shell_half_w(x1) - 0.02), 0))
+            t = (pb - pa).normalized()
+            hz = ARCH_SPRING * (1 - (PROSC_X - REVEAL - x1) / (PROSC_X - REVEAL - STAGE_BACK_X)
+                                * (1 - SHELL_TAPER_Z))
+            add_frame(kit, (pa + pb) / 2, t, 1.3, 3.1, 1.25, 0.05)
+            add_frame(kit, (pa + pb) / 2, t, 3.5, hz - 1.0, 1.25, 0.05)
     for sign in (-1, 1):
         a = [Vector((p.x, sign * (abs(p.y) - 0.03), p.z)) for p in
              (reveal[1], back[1])]
@@ -608,8 +758,11 @@ def build_house(kit):
         ra = [Vector((x, y, z)) for x, y in ellipse(DOME_CX, 0.0, DOME_A, DOME_B, 64, s0)]
         rb = [Vector((x, y, z)) for x, y in ellipse(DOME_CX, 0.0, DOME_A, DOME_B, 64, s1)]
         kit.strip("Hall_Gold", ra, rb, closed=True)
-    med = [Vector((x, y, CEILING_Z + DOME_H - 0.02)) for x, y in ellipse(DOME_CX, 0.0, 1.2, 1.0, 24)]
+    # A boss hanging clear of the dome (the dome curves down 2 cm by its rim,
+    # so a flush disc would sit inside the plaster and bake black).
+    med = [Vector((x, y, CEILING_Z + DOME_H - 0.12)) for x, y in ellipse(DOME_CX, 0.0, 1.2, 1.0, 24)]
     kit.face("Hall_Gold", list(reversed(med)))
+    kit.strip("Hall_Gold", med, at_z(med, CEILING_Z + DOME_H), closed=True)
 
     # Rings of bulbs: round the rim, and two inside the dome.
     for s, n, zoff in ((1.035, 56, -0.12), (0.8, 44, None), (0.45, 28, None)):
@@ -627,6 +780,7 @@ def build_house(kit):
         radius = x - focus.x
         dth = SEAT_PITCH / radius
         n = int(math.asin(min(1.0, HALL_HALF_W / radius)) / dth) + 1
+        row = []
         for i in range(-n, n + 1):
             th = i * dth
             p = Vector((focus.x + radius * math.cos(th), radius * math.sin(th), 0))
@@ -635,7 +789,8 @@ def build_house(kit):
             if 4.0 < abs(p.y) < 5.2:
                 continue
             p.z = parquet_z(p.x)
-            add_seat(kit, p, focus - p)
+            row.append((p, focus - p))
+        add_seat_row(kit, row)
         x += ROW_PITCH * 1.05
 
 
@@ -661,30 +816,35 @@ def build_trim(kit):
     plan = [(p.x, p.y) for p in wall]
     oval = ellipse(DOME_CX, 0.0, DOME_A, DOME_B, 64)
     a, b = ring(oval, plan, (DOME_CX, 0.0))
-    zc = CEILING_Z - 0.03
+    # Ribs are shallow beams, so the bake shades their sides.
     for i in range(0, len(a), 6):
-        pa, pb = Vector((*a[i], zc)), Vector((*b[i], zc))
-        d = (pb - pa).normalized()
-        side = Vector((-d.y, d.x, 0)) * 0.15
-        kit.face("Hall_Gold", [pa - side, pb - side, pb + side, pa + side])
-    ra = [Vector((x, y, zc - 0.01)) for x, y in ellipse(DOME_CX, 0.0, DOME_A, DOME_B, 64, 1.30)]
-    rb = [Vector((x, y, zc - 0.01)) for x, y in ellipse(DOME_CX, 0.0, DOME_A, DOME_B, 64, 1.34)]
+        pa, pb = Vector((*a[i], CEILING_Z)), Vector((*b[i], CEILING_Z))
+        kit.box("Hall_Gold", (pa + pb) / 2 - Vector((0, 0, 0.11)), pb - pa,
+                ((pb - pa).length - 0.3, 0.3, 0.22), bottom=True)
+    zc = CEILING_Z - 0.18
+    ra = [Vector((x, y, zc)) for x, y in ellipse(DOME_CX, 0.0, DOME_A, DOME_B, 64, 1.30)]
+    rb = [Vector((x, y, zc)) for x, y in ellipse(DOME_CX, 0.0, DOME_A, DOME_B, 64, 1.34)]
     kit.strip("Hall_Gold", ra, rb, closed=True)
+    for rr in (ra, rb):
+        kit.strip("Hall_Gold", rr, at_z(rr, CEILING_Z), closed=True)
 
     # Dome: gilt meridian ribs from the rim up to the inner ring.
     phi_top = math.acos(0.6)
     for k in range(20):
         th = math.tau * k / 20
-        left, right = [], []
+        rib = {}  # (side, layer) -> points; layer 0 on the dome, 1 hanging below
         for j in range(7):
             phi = phi_top * j / 6
-            sc = math.cos(phi) * 0.995
-            z = CEILING_Z + DOME_H * math.sin(phi) - 0.04
-            d = 0.15 / (0.5 * (DOME_A + DOME_B) * sc)
-            for th2, out in ((th - d, left), (th + d, right)):
-                out.append(Vector((DOME_CX + DOME_A * sc * math.cos(th2),
-                                   DOME_B * sc * math.sin(th2), z)))
-        kit.strip("Hall_Gold", left, right, smooth=True)
+            for layer, (shrink, drop) in enumerate(((0.998, 0.0), (0.985, 0.14))):
+                sc = math.cos(phi) * shrink
+                z = CEILING_Z + DOME_H * math.sin(phi) - 0.03 - drop
+                d = 0.13 / (0.5 * (DOME_A + DOME_B) * sc)
+                for side, th2 in ((0, th - d), (1, th + d)):
+                    rib.setdefault((side, layer), []).append(
+                        Vector((DOME_CX + DOME_A * sc * math.cos(th2), DOME_B * sc * math.sin(th2), z)))
+        kit.strip("Hall_Gold", rib[0, 1], rib[1, 1])
+        for side in (0, 1):
+            kit.strip("Hall_Gold", rib[side, 0], rib[side, 1])
 
     # Tall arched panels on the side walls between the proscenium and the
     # Dress Circle, framed in gilt with damask fields.
@@ -752,25 +912,28 @@ def build_tier(kit, name, z, x_start, depth, rows, boxes, step):
 
     # Soffit and the face of the slab.
     kit.strip("Hall_Plaster", at_z(wall, soffit_z), at_z(rail, soffit_z))
-    # Parapet: plaster front with gilt mouldings and a velvet capping.
-    cap_z = z + 0.95
-    front = horseshoe(depth + 0.02, x_start)[0]
-    kit.strip("Hall_Plaster", at_z(rail, soffit_z), at_z(rail, cap_z))
+    # Parapet: a swept moulding profile (bead under the soffit, plaster
+    # fascia with a gilt band, ogee cornice) under a padded velvet rail.
+    cap_z = z + 0.99
+    kit.sweep(at_z(rail, z), normals, PARAPET_PROFILE)
     back = horseshoe(depth - 0.18, x_start)[0]
-    kit.strip("Hall_Plaster", at_z(back, cap_z), at_z(back, z))
-    kit.strip("Hall_Velvet", at_z(rail, cap_z), at_z(back, cap_z))
-    kit.strip("Hall_Gold", at_z(front, cap_z - 0.16), at_z(front, cap_z - 0.04))
-    kit.strip("Hall_Gold", at_z(front, soffit_z + 0.05), at_z(front, soffit_z + 0.22))
-    kit.strip("Hall_Gold", at_z(front, z + 0.15), at_z(front, z + 0.25))
+    kit.strip("Hall_Plaster", at_z(back, z + 0.95), at_z(back, z))
     # Gilt panel frames along the straight runs of the parapet front.
     face_path = horseshoe(depth + 0.035, x_start)[0]
     for p, t in resample(face_path, 1.7):
         if p.x > x_start + 0.9 and on_straight(p, 0.7):
-            add_frame(kit, p, t, z + 0.32, cap_z - 0.24, 1.3)
-    # Red damask lining the boxes.
+            add_frame(kit, p, t, z + 0.3, z + 0.64, 1.3, 0.04)
+    # Brass sconces on the parapet's lower fascia, a lamp on each.
+    for p, t in resample(horseshoe(depth + 0.03, x_start)[0], 1.7):
+        if p.x < x_start + 0.5:
+            continue
+        n = Vector((t.y, -t.x, 0))  # toward the wall
+        kit.box("Hall_Gold", p - n * 0.05 + Vector((0, 0, z - 0.2)), -n, (0.1, 0.05, 0.05))
+        kit.bulb(p - n * 0.12 + Vector((0, 0, z - 0.16)), 0.06)
+    # Red damask lining the boxes, up to the soffit of the tier above.
     if boxes:
         lining = horseshoe(0.02, x_start)[0]
-        kit.strip("Hall_Fabric", at_z(lining, z), at_z(lining, z + 2.6))
+        kit.strip("Hall_Fabric", at_z(lining, z), at_z(lining, z + 2.95))
 
     # End caps, a hair beyond the tier so the tread edges don't z-fight them.
     for i in (0, -1):
@@ -780,35 +943,158 @@ def build_tier(kit, name, z, x_start, depth, rows, boxes, step):
                                   Vector((x, wall[i].y, top_z + 1.0)),
                                   Vector((x, rail[i].y, cap_z))])
 
-    # Lamps along the soffit edge.
-    line = at_z(horseshoe(depth - 0.25, x_start)[0], soffit_z - 0.09)
-    for p, _ in resample(line, 1.6):
-        kit.bulb(p, 0.07)
-
     # Box partitions for the boxed tiers.
     if boxes:
         for p, tangent in resample(rail, 2.7):
             n = Vector((tangent.y, -tangent.x, 0))  # outward (toward the wall)
-            # From behind the parapet back to the wall.
-            c = p + n * ((depth + 0.18) / 2) + Vector((0, 0, 0.8))
-            kit.box("Hall_Plaster", c, n, (depth - 0.18, 0.07, 1.6))
+            # From behind the parapet back to the wall, at rail height.
+            c = p + n * ((depth + 0.18) / 2) + Vector((0, 0, z + 0.47))
+            kit.box("Hall_Plaster", c, n, (depth - 0.18, 0.07, 0.94))
 
     # Seats, one row per tread, facing in across the hall.
     for k in range(rows):
         inset = depth - 0.75 - ROW_PITCH * k
         if inset < 0.35:
             break
-        row = horseshoe(inset, x_start)[0]
-        for p, tangent in resample(row, SEAT_PITCH):
+        line = horseshoe(inset, x_start)[0]
+        row = []
+        for p, tangent in resample(line, SEAT_PITCH):
             if p.x < x_start + 0.5:
                 continue
             inward = Vector((-tangent.y, tangent.x, 0))
-            p = Vector((p.x, p.y, z + step * k))
-            add_seat(kit, p, inward)
+            row.append((Vector((p.x, p.y, z + step * k)), inward))
+        add_seat_row(kit, row)
     return name
 
 
 # --- Scene assembly ---------------------------------------------------------
+
+
+def _noise(rng, h, w, su, sv):
+    """Tileable Gaussian-filtered noise (unit variance); ``su``/``sv`` are the
+    blur radii in pixels along u (columns) and v (rows)."""
+    import numpy as np
+
+    fy = np.fft.fftfreq(h)[:, None]
+    fx = np.fft.fftfreq(w)[None, :]
+    filt = np.exp(-2 * np.pi**2 * ((fx * su) ** 2 + (fy * sv) ** 2))
+    n = np.real(np.fft.ifft2(np.fft.fft2(rng.standard_normal((h, w))) * filt))
+    return (n - n.mean()) / (n.std() + 1e-9)
+
+
+def _texture(name, size):
+    """Linear-RGB albedo, shape (h, w, 3), tiling seamlessly."""
+    import numpy as np
+
+    rng = np.random.default_rng(sum(map(ord, name)))  # stable across runs
+    base = np.array(MATERIALS[name][0])
+    h = w = size
+    v, u = np.mgrid[0:h, 0:w] / size
+
+    if name == "Hall_Stage_Wood":
+        # WOOD_VARIANTS strips of one board each: long streaky grain, figure
+        # bands, pores and dark seams along the board edges and ends.
+        h = size // 4
+        rows = []
+        lane_h = h // WOOD_VARIANTS
+        for k in range(WOOD_VARIANTS):
+            vv = np.mgrid[0:lane_h, 0:w][0] / lane_h
+            streak = _noise(rng, lane_h, w, 90, 0.8)
+            figure = np.sin(2 * np.pi * (vv * rng.uniform(2.5, 5) + 0.9 * _noise(rng, lane_h, w, 260, 14)))
+            pores = np.clip(_noise(rng, lane_h, w, 7, 0.4) - 1.6, 0, None)
+            t = 1 + 0.10 * streak + 0.07 * figure + 0.05 * _noise(rng, lane_h, w, 400, 40) - 0.18 * pores
+            t *= rng.uniform(0.9, 1.08)
+            seam = np.ones_like(t)
+            seam[:2] = 0.45
+            seam[-2:] = 0.45
+            seam[:, :3] = 0.5
+            seam[:, -3:] = 0.5
+            rows.append((t * seam)[..., None] * base)
+        return np.concatenate(rows, axis=0)
+    if name == "Hall_Dark_Wood":
+        t = 1 + 0.1 * _noise(rng, h, w, 80, 2.0) + 0.06 * _noise(rng, h, w, 20, 20)
+        return t[..., None] * base
+    if name == "Hall_Plaster":
+        t = 1 + 0.014 * _noise(rng, h, w, 40, 40) + 0.01 * _noise(rng, h, w, 1.5, 1.5)
+        return t[..., None] * base
+    if name == "Hall_Gold":
+        # Leaf laid in squares, each a shade off its neighbours.
+        cells = 4
+        tone = rng.uniform(0.92, 1.08, (cells, cells))
+        ci = (np.mgrid[0:h, 0:w] * cells // size)
+        t = tone[ci[0], ci[1]] * (1 + 0.03 * _noise(rng, h, w, 2, 2))
+        edge = (np.minimum((u * cells) % 1, (v * cells) % 1) < 0.02)
+        t = np.where(edge, t * 0.88, t)
+        return t[..., None] * base
+    if name == "Hall_Velvet":
+        t = 1 + 0.06 * _noise(rng, h, w, 1.2, 1.2) + 0.04 * _noise(rng, h, w, 12, 3)
+        return t[..., None] * base
+    if name == "Hall_Carpet":
+        # Small gold-red diamonds on a deep red field, with pile noise.
+        k = 8
+        du, dv = np.abs((u * k) % 1 - 0.5), np.abs((v * k) % 1 - 0.5)
+        motif = np.clip((0.2 - (du + dv)) / 0.04, 0, 1)
+        ring = np.clip(1 - np.abs(du + dv - 0.42) / 0.03, 0, 1)
+        col = base[None, None, :] * (1 + 0.1 * _noise(rng, h, w, 0.8, 0.8))[..., None]
+        accent = np.array((0.32, 0.12, 0.04))
+        mix = (0.55 * motif + 0.3 * ring)[..., None]
+        return col * (1 - mix) + accent * mix
+    if name == "Hall_Fabric":
+        # Damask: a satin medallion lattice on a matte field.
+        x, y = 2 * np.pi * u * 2, 2 * np.pi * v * 2
+        f = np.cos(x) * np.cos(y) + 0.45 * np.cos(2 * x + np.sin(y)) * np.cos(3 * y) + 0.25 * np.cos(4 * y)
+        pattern = np.clip((f - 0.15) / 0.12, 0, 1)
+        t = (0.82 + 0.45 * pattern) * (1 + 0.03 * _noise(rng, h, w, 1, 1))
+        return t[..., None] * base
+    raise KeyError(name)
+
+
+_images = {}
+
+
+def make_texture_image(name, size):
+    import numpy as np
+
+    name = TEXTURE_SOURCE.get(name, name)
+    if name in _images:  # made earlier in this build for a sibling material
+        return _images[name]
+    rgb = np.clip(_texture(name, size), 0, 1)
+    srgb = np.where(rgb <= 0.0031308, rgb * 12.92, 1.055 * rgb ** (1 / 2.4) - 0.055)
+    h, w = srgb.shape[:2]
+    img_name = f"{name}_Tex"
+    old = bpy.data.images.get(img_name)
+    if old:
+        bpy.data.images.remove(old)
+    img = bpy.data.images.new(img_name, w, h, alpha=False)
+    rgba = np.concatenate([srgb, np.ones((h, w, 1))], axis=2).astype(np.float32)
+    img.pixels.foreach_set(rgba.ravel())
+    img.file_format = "JPEG"
+    img.pack()
+    _images[name] = img
+    return img
+
+
+def project_uvs(meshes):
+    """Box-project world metres into UVs for faces without explicit ones."""
+    for mat, bm in meshes.items():
+        tile = TEXTURES.get(mat, (None,))[0] or 1.0
+        uv_layer = bm.loops.layers.uv["UVMap"]
+        has_uv = bm.faces.layers.int["has_uv"]
+        for f in bm.faces:
+            if f[has_uv]:
+                continue
+            f.normal_update()
+            n = f.normal
+            ax, ay, az = abs(n.x), abs(n.y), abs(n.z)
+            for loop in f.loops:
+                p = loop.vert.co
+                if az >= ax and az >= ay:
+                    q = (p.x, p.y)
+                elif ax >= ay:
+                    q = (p.y, p.z)
+                else:
+                    q = (p.x, p.z)
+                loop[uv_layer].uv = (q[0] / tile, q[1] / tile)
 
 
 def make_material(name, spec):
@@ -816,6 +1102,10 @@ def make_material(name, spec):
     mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
     bsdf = mat.node_tree.nodes.get("Principled BSDF")
     bsdf.inputs["Base Color"].default_value = (*color, 1.0)
+    if name in TEXTURES:
+        tex = mat.node_tree.nodes.new("ShaderNodeTexImage")
+        tex.image = make_texture_image(name, TEXTURES[name][1])
+        mat.node_tree.links.new(tex.outputs["Color"], bsdf.inputs["Base Color"])
     bsdf.inputs["Metallic"].default_value = metallic
     bsdf.inputs["Roughness"].default_value = roughness
     if emission:
@@ -905,6 +1195,7 @@ def build():
     build_trim(kit)
 
     orient_faces(kit.meshes)
+    project_uvs(kit.meshes)
     meshes = []
     for mat_name, bm in kit.meshes.items():
         bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)
@@ -1078,7 +1369,8 @@ def bake_lighting(meshes):
         mesh = o.data
         tone = read(mesh, TONE_ATTR)
         if o.name in baked:
-            x = baked[o.name] / max(median, 1e-6)
+            # A little ambient keeps deep corners from going pure black.
+            x = baked[o.name] / max(median, 1e-6) + BAKE_AMBIENT
             light = x / (1.0 + x.max(axis=1, keepdims=True))  # hue-preserving roll-off
             loop_verts = np.empty(len(mesh.loops), dtype=np.int64)
             mesh.loops.foreach_get("vertex_index", loop_verts)
