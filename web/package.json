@@ -4,10 +4,12 @@
   "version": "0.5.2",
   "type": "module",
   "scripts": {
+    "predev": "node scripts/compress-model.mjs",
     "dev": "vite",
-    "build": "node scripts/fetch-model.mjs && vite build",
+    "build": "node scripts/fetch-model.mjs && node scripts/compress-model.mjs && vite build",
     "preview": "vite preview",
     "package": "npm run build && node scripts/package-release.mjs",
+    "compress-model": "node scripts/compress-model.mjs --force",
     "favicon": "node scripts/generate-favicon.mjs"
   },
   "dependencies": {
@@ -15,6 +17,10 @@
     "three": "^0.176.0"
   },
   "devDependencies": {
+    "@gltf-transform/core": "^4.5.1",
+    "@gltf-transform/extensions": "^4.5.1",
+    "@gltf-transform/functions": "^4.5.1",
+    "meshoptimizer": "^1.3.0",
     "sharp": "^0.34.2",
     "to-ico": "^1.1.5",
     "vite": "^6.3.5"

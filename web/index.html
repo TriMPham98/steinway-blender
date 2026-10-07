@@ -13,6 +13,13 @@
     <div id="app">
       <div id="viewport"></div>
 
+      <div id="loader" class="loader" role="progressbar" aria-label="Loading piano"
+        aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+        <span class="wordmark">STEINWAY</span>
+        <div class="loader-track"><div id="loader-bar" class="loader-bar"></div></div>
+        <p id="loader-text" class="loader-text">Loading piano…</p>
+      </div>
+
       <button
         type="button"
         id="menu-toggle"
@@ -39,6 +46,7 @@
         class="drawer"
         aria-label="Steinway MIDI controls"
         aria-hidden="true"
+        inert
       >
         <div class="drawer-head">
           <span class="wordmark">STEINWAY</span>

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Assemble a shippable folder: dist/ + models/ + README.
+ * Assemble a shippable folder: dist/ (which carries models/) + README.
  * Run from web/: npm run package
  */
 import fs from "fs";
@@ -10,19 +10,14 @@ import { fileURLToPath } from "url";
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoRoot = path.dirname(webRoot);
 const dist = path.join(webRoot, "dist");
-const modelsSrc = path.join(webRoot, "public", "models");
 const outDir = path.join(repoRoot, "release", "steinway-midi-piano-web");
 
 if (!fs.existsSync(dist)) {
   console.error("Missing dist/ — run npm run build first");
   process.exit(1);
 }
-if (!fs.existsSync(path.join(modelsSrc, "steinway.glb"))) {
-  console.error(
-    "Missing public/models/steinway.glb — export from Blender:\n" +
-      "  Blender --background assets/steinway_grand_playable.blend --python scripts/export_glb.py -- \\\n" +
-      "    --out web/public/models/steinway.glb --with-action",
-  );
+if (!fs.existsSync(path.join(dist, "models", "steinway.min.glb"))) {
+  console.error("Missing dist/models/steinway.min.glb — run npm run build (needs public/models/steinway.glb)");
   process.exit(1);
 }
 fs.rmSync(outDir, { recursive: true, force: true });
@@ -39,7 +34,6 @@ function copyDir(src, dest) {
 }
 
 copyDir(dist, outDir);
-copyDir(modelsSrc, path.join(outDir, "models"));
 
 const readme = `# Steinway MIDI Piano (Web)
 
@@ -66,7 +60,7 @@ Then open the URL shown (must be https:// or localhost for MIDI).
 
 fs.writeFileSync(path.join(outDir, "README.txt"), readme);
 
-const glb = path.join(outDir, "models", "steinway.glb");
+const glb = path.join(outDir, "models", "steinway.min.glb");
 const mb = (fs.statSync(glb).size / 1e6).toFixed(1);
 console.log(`[package] ${outDir}`);
 console.log(`[package] model ${mb} MB — deploy folder as-is`);

@@ -61,6 +61,12 @@ export class PianoAudio {
     this._voices = new Map();
     /** Notes whose key/pointer is physically held down. @type {Set<number>} */
     this._held = new Set();
+    /**
+     * Strikes that arrived before the samples finished loading: note -> velocity.
+     * Any still held when loading completes sound then, so a first press during
+     * the download isn't silently lost. @type {Map<number, number>}
+     */
+    this._pending = new Map();
     /** Fired when sample loading begins (e.g. to show a toast). @type {(() => void) | null} */
     this.onLoading = null;
     /** Fired once when samples finish loading. @type {(() => void) | null} */
@@ -141,6 +147,12 @@ export class PianoAudio {
     this._loadPromise = this.piano.ready
       .then(() => {
         this.loaded = true;
+        for (const [note, velocity] of this._pending) {
+          if (this._held.has(note) || this.sustain) {
+            this._voices.set(note, this.piano.start({ note, velocity }));
+          }
+        }
+        this._pending.clear();
         this.onLoaded?.();
       })
       .catch((err) => {
@@ -174,8 +186,13 @@ export class PianoAudio {
    * @param {number} [velocity] 0–127
    */
   noteOn(note, velocity = DEFAULT_VELOCITY) {
-    if (!this.enabled || !this.loaded || !this.piano) return;
+    if (!this.enabled) return;
     this._held.add(note);
+    if (!this.loaded || !this.piano) {
+      this._pending.set(note, velocity);
+      this.init();
+      return;
+    }
     // Damp any still-ringing voice for this note before re-striking it, so
     // trills/repeats reset the string the way a real damper would.
     this._stopVoice(note);
@@ -189,6 +206,8 @@ export class PianoAudio {
    */
   noteOff(note) {
     this._held.delete(note);
+    // Pedal-held pending strikes still sound on load, like a real sustained note.
+    if (!this.sustain) this._pending.delete(note);
     if (this.sustain) return;
     this._stopVoice(note);
   }
@@ -207,6 +226,7 @@ export class PianoAudio {
   allOff() {
     for (const note of [...this._voices.keys()]) this._stopVoice(note);
     this._held.clear();
+    this._pending.clear();
     this.sustain = false;
     this.piano?.stop();
   }

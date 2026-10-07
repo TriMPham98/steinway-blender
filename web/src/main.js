@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { MeshoptDecoder } from "three/examples/jsm/libs/meshopt_decoder.module.js";
 import { PianoController } from "./piano.js";
 import { buildCaseRig, createCaseState, pickLidHit, stepCase } from "./case.js";
 import { LiveSession } from "./live.js";
@@ -36,7 +37,11 @@ import {
   stripStrayCurves,
 } from "./scene-utils.js";
 
-const MODEL_URL = "/models/steinway.glb";
+// Meshopt/WebP-compressed derivative of the Blender export (scripts/compress-model.mjs).
+const MODEL_URL = "/models/steinway.min.glb";
+// Decoded byte size, baked in by vite.config.js. Compressed responses (Vercel
+// serves .glb as brotli) carry no Content-Length, so this drives the progress bar.
+const MODEL_BYTES = __MODEL_BYTES__;
 const MANIFEST_URL = "/models/steinway.keys.json";
 
 const ui = {
@@ -53,6 +58,9 @@ const ui = {
   menuToggle: document.getElementById("menu-toggle"),
   drawer: document.getElementById("drawer"),
   drawerClose: document.getElementById("drawer-close"),
+  loader: document.getElementById("loader"),
+  loaderBar: document.getElementById("loader-bar"),
+  loaderText: document.getElementById("loader-text"),
 };
 const viewport = document.getElementById("viewport");
 
@@ -118,6 +126,7 @@ let sceneDebug = null;
 let lightDebug = null;
 
 const loader = new GLTFLoader();
+loader.setMeshoptDecoder(MeshoptDecoder);
 const raycaster = new THREE.Raycaster();
 // Keys / lid meshes are drawn via BatchedMesh; their sources live on this layer.
 raycaster.layers.enable(BATCH_SOURCE_LAYER);
@@ -428,15 +437,40 @@ function setStatus(msg) {
   statusTimer = setTimeout(() => ui.status.classList.remove("show"), 3500);
 }
 
+/** @param {number} fraction 0–1 */
+function setLoadProgress(fraction) {
+  const f = THREE.MathUtils.clamp(fraction, 0, 1);
+  ui.loaderBar.style.transform = `scaleX(${f})`;
+  ui.loader.setAttribute("aria-valuenow", String(Math.round(f * 100)));
+  ui.loaderText.textContent = `Loading piano… ${Math.round(f * 100)}%`;
+}
+
+function hideLoader() {
+  ui.loader.classList.add("done");
+}
+
+/** @param {string} msg */
+function showLoadError(msg) {
+  ui.loader.classList.add("error");
+  ui.loader.removeAttribute("aria-valuenow");
+  ui.loaderText.textContent = msg;
+}
+
 function openDrawer() {
   ui.drawer.classList.add("open");
+  // The closed drawer is translated off-screen; `inert` keeps Tab from focusing
+  // its controls, which would scroll #app sideways to reveal them.
+  ui.drawer.inert = false;
   ui.drawer.setAttribute("aria-hidden", "false");
   ui.menuToggle.setAttribute("aria-expanded", "true");
   ui.menuToggle.classList.add("hidden");
 }
 
 function closeDrawer() {
+  // Hand focus back before the drawer goes inert, so it isn't stranded.
+  if (ui.drawer.contains(document.activeElement)) ui.menuToggle.focus();
   ui.drawer.classList.remove("open");
+  ui.drawer.inert = true;
   ui.drawer.setAttribute("aria-hidden", "true");
   ui.menuToggle.setAttribute("aria-expanded", "false");
   ui.menuToggle.classList.remove("hidden");
@@ -700,13 +734,15 @@ function onPointerUp(event) {
 }
 
 async function init() {
-  setStatus("Loading model…");
+  // Start fetching the piano samples alongside the model so the first note
+  // the visitor plays isn't spent waiting on the download.
+  preloadAudioIfLocal();
   const [gltf, manifest] = await Promise.all([
     new Promise((resolve, reject) => {
       loader.load(MODEL_URL, resolve, (xhr) => {
-        if (xhr.total) {
-          setStatus(`Loading model… ${Math.round((xhr.loaded / xhr.total) * 100)}%`);
-        }
+        const total = MODEL_BYTES || xhr.total;
+        // Hold back from 100% until parsing finishes and the scene is built.
+        if (total) setLoadProgress(Math.min(xhr.loaded / total, 0.99));
       }, reject);
     }),
     loadManifest(),
@@ -845,10 +881,26 @@ async function init() {
     setStatus(`Keys missing (${ready}/88) — re-export model`);
   }
 
-  // Once the sampled grand is loaded, nudge no-MIDI visitors to play.
+  // Once the sampled grand is loaded, nudge no-MIDI visitors to play. The
+  // samples may already have finished while the model was downloading.
   audio.onLoaded = () => {
     if (!live?.isRunning) setStatus("No MIDI — play with your mouse or keyboard");
   };
+  if (audio.loaded) audio.onLoaded();
+
+  // Cinematic intro: reveal from a wide pose, then settle into the hero view.
+  const start = new THREE.Vector3(...CAMERA_PRESETS.hero.position)
+    .multiplyScalar(1.8)
+    .setY(CAMERA_PRESETS.hero.position[1] + 1.2);
+  camera.position.copy(start);
+  goToViewPreset("hero", 2.2);
+  setTimeout(() => {
+    allowMidiAutoConnect = true;
+    maybeAutoConnectMidi();
+  }, 2300);
+  // Lift the loading screen as the sweep starts — before setupMidi(), which can
+  // sit on the browser's MIDI permission prompt.
+  hideLoader();
 
   await setupMidi();
 
@@ -935,17 +987,6 @@ async function init() {
     localNoteOff(note);
   });
 
-  // Cinematic intro: reveal from a wide pose, then settle into the hero view.
-  const start = new THREE.Vector3(...CAMERA_PRESETS.hero.position)
-    .multiplyScalar(1.8)
-    .setY(CAMERA_PRESETS.hero.position[1] + 1.2);
-  camera.position.copy(start);
-  goToViewPreset("hero", 2.2);
-  setTimeout(() => {
-    allowMidiAutoConnect = true;
-    maybeAutoConnectMidi();
-    preloadAudioIfLocal();
-  }, 2300);
 }
 
 bindViewPresetClearOnUserInput();
@@ -1075,8 +1116,10 @@ function animate() {
 
 init().catch((err) => {
   console.error(err);
-  setStatus(
-    "Could not load model. Export first: Blender --background assets/steinway_grand_playable.blend --python scripts/export_glb.py",
+  showLoadError(
+    import.meta.env.DEV
+      ? "Could not load model. Export first: Blender --background assets/steinway_grand_playable.blend --python scripts/export_glb.py"
+      : "Could not load the piano. Check your connection and reload.",
   );
 });
 
