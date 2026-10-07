@@ -7,7 +7,11 @@ const MODEL_PATH = "public/models/steinway.min.glb";
 const modelBytes = fs.existsSync(MODEL_PATH) ? fs.statSync(MODEL_PATH).size : 0;
 
 // Only the compressed derivative is served; don't ship the raw Blender exports.
-const RAW_MODELS = ["models/steinway.glb", "models/steinway_keys.glb"];
+const RAW_MODELS = [
+  "models/steinway.glb",
+  "models/steinway_keys.glb",
+  "models/carnegie_hall.glb",
+];
 
 export default defineConfig({
   root: ".",

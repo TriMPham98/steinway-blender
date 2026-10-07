@@ -143,6 +143,12 @@ export const CAMERA_PRESETS = {
     fov: CAMERA_AUTHORING.seated.fov,
     exposure: CAMERA_AUTHORING.seated.exposure,
   },
+  /** From the Carnegie Hall stalls (house is +X); only offered in the hall. */
+  house: {
+    position: [20, 5.5, -3.5],
+    target: [-1, 2.2, 0],
+    fov: 42,
+  },
 };
 
 /**

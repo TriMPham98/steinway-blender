@@ -11,6 +11,7 @@ import { PianoAudio } from "./audio.js";
 import { MIDI_HIGH, MIDI_LOW } from "./anim.js";
 import { backendAvailable, findDefaultPort, listInputPorts } from "./midi.js";
 import { BATCH_SOURCE_LAYER, batchMeshes } from "./batching.js";
+import { applyHallCameraLimits, clampToHall, loadHall, prepareHall } from "./hall.js";
 
 import {
   CAMERA_AUTHORING,
@@ -55,6 +56,7 @@ const ui = {
   viewFront: document.getElementById("view-front"),
   viewTop: document.getElementById("view-top"),
   viewSeated: document.getElementById("view-seated"),
+  viewHouse: document.getElementById("view-house"),
   caseControls: document.getElementById("case-controls"),
   lidToggle: document.getElementById("btn-lid-toggle"),
   deskToggle: document.getElementById("btn-desk-toggle"),
@@ -64,6 +66,9 @@ const ui = {
   loader: document.getElementById("loader"),
   loaderBar: document.getElementById("loader-bar"),
   loaderText: document.getElementById("loader-text"),
+  stageControls: document.getElementById("stage-controls"),
+  stageHall: document.getElementById("stage-hall"),
+  stageStudio: document.getElementById("stage-studio"),
 };
 const viewport = document.getElementById("viewport");
 
@@ -101,6 +106,7 @@ renderer.shadowMap.needsUpdate = true;
 viewport.appendChild(renderer.domElement);
 
 setupEnvironment(renderer, scene);
+const studioDome = scene.getObjectByName("Studio_Dome");
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(...HERO_CAMERA_DEFAULTS.target);
@@ -118,6 +124,12 @@ const lightHelpers = createLightHelpers(scene, lights);
 let studioFloor = createStudioGround(scene);
 /** @type {THREE.Object3D | null} */
 let contactShadow = null;
+/** @type {ReturnType<typeof prepareHall> | null} */
+let hall = null;
+let inHall = false;
+/** Studio-mode camera limits, restored when leaving the hall. */
+let studioLimits = null;
+const STAGE_STORAGE_KEY = "steinway.stage-choice";
 
 let modelRoot = null;
 /** @type {ReturnType<typeof batchMeshes> | null} */
@@ -232,6 +244,7 @@ const VIEW_PRESET_BY_KEY = {
   2: "front",
   3: "top",
   4: "seated",
+  5: "house",
 };
 
 const viewPresetButtons = {
@@ -239,6 +252,7 @@ const viewPresetButtons = {
   front: ui.viewFront,
   top: ui.viewTop,
   seated: ui.viewSeated,
+  house: ui.viewHouse,
 };
 
 let activeViewPreset = null;
@@ -273,6 +287,7 @@ function isEditableFocusTarget(el) {
 }
 
 function goToViewPreset(id, duration = 1.0) {
+  if (id === "house" && !inHall) return;
   viewingKeyboardRange = false;
   setActiveViewPreset(id);
   animateCameraTo(CAMERA_PRESETS[id], duration);
@@ -770,11 +785,50 @@ function onPointerUp(event) {
   updateHoverCursor(event.clientX, event.clientY);
 }
 
+function preferredStage() {
+  const param = new URLSearchParams(window.location.search).get("stage");
+  if (param === "hall" || param === "studio") return param;
+  try {
+    return localStorage.getItem(STAGE_STORAGE_KEY) === "studio" ? "studio" : "hall";
+  } catch {
+    return "hall";
+  }
+}
+
+/**
+ * Put the piano on the Carnegie Hall stage or back in the studio.
+ * @param {"hall" | "studio"} kind
+ * @param {{ remember?: boolean }} [opts] remember: the visitor picked it, so
+ *   keep it for next time (a load that fell back to the studio must not).
+ */
+function setStage(kind, { remember = false } = {}) {
+  inHall = kind === "hall" && hall != null;
+  if (hall) hall.root.visible = inHall;
+  if (studioFloor) studioFloor.visible = !inHall;
+  if (studioDome) studioDome.visible = !inHall;
+  // The stage boards take the real shadow; the soft blob is for the glass floor.
+  if (contactShadow) contactShadow.visible = !inHall;
+  if (studioLimits) applyHallCameraLimits(camera, controls, inHall, studioLimits);
+  ui.viewHouse.hidden = !inHall;
+  for (const [btn, on] of [[ui.stageHall, inHall], [ui.stageStudio, !inHall]]) {
+    btn.classList.toggle("is-active", on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+  if (remember) {
+    try {
+      localStorage.setItem(STAGE_STORAGE_KEY, kind);
+    } catch {
+      // Storage blocked (private mode): the choice just isn't remembered.
+    }
+  }
+  requestRender({ poseChanged: true });
+}
+
 async function init() {
   // Start fetching the piano samples alongside the model so the first note
   // the visitor plays isn't spent waiting on the download.
   preloadAudioIfLocal();
-  const [gltf, manifest] = await Promise.all([
+  const [gltf, manifest, hallScene] = await Promise.all([
     new Promise((resolve, reject) => {
       loader.load(MODEL_URL, resolve, (xhr) => {
         const total = MODEL_BYTES || xhr.total;
@@ -783,6 +837,7 @@ async function init() {
       }, reject);
     }),
     loadManifest(),
+    loadHall(loader),
   ]);
 
   const model = gltf.scene;
@@ -820,6 +875,24 @@ async function init() {
   renderer.toneMappingExposure = pose.exposure;
   syncViewerLight(pose.viewerLightPosition);
 
+  studioLimits = { far: camera.far, maxDistance: controls.maxDistance };
+  if (hallScene) {
+    hall = prepareHall(hallScene, model);
+    scene.add(hall.root);
+    ui.stageControls.hidden = false;
+    ui.stageHall.addEventListener("click", () => {
+      setStage("hall", { remember: true });
+      goToViewPreset("house");
+    });
+    ui.stageStudio.addEventListener("click", () => {
+      // Out in the house the studio's orbit limit would snap the camera in.
+      const far = camera.position.distanceTo(controls.target) > studioLimits.maxDistance;
+      if (activeViewPreset === "house" || far) goToViewPreset("hero");
+      setStage("studio", { remember: true });
+    });
+  }
+  setStage(preferredStage());
+
   heroCameraDefaults = {
     position: pose.position.clone(),
     target: pose.target.clone(),
@@ -834,6 +907,7 @@ async function init() {
     window.__renderer = renderer;
     window.__scene = scene;
     window.__floor = studioFloor;
+    window.__hall = hall;
 
     const debugStack = document.createElement("div");
     debugStack.className = "debug-stack";
@@ -938,11 +1012,25 @@ async function init() {
   if (audio.loaded) audio.onLoaded();
 
   // Cinematic intro: reveal from a wide pose, then settle into the hero view.
-  const start = new THREE.Vector3(...CAMERA_PRESETS.hero.position)
-    .multiplyScalar(1.8)
-    .setY(CAMERA_PRESETS.hero.position[1] + 1.2);
-  camera.position.copy(start);
-  goToViewPreset("hero", 2.2);
+  // The hero shot looks upstage, so in the hall open on the view from the
+  // stalls first; any orbit before the sweep keeps the visitor's own view.
+  if (inHall) {
+    const house = CAMERA_PRESETS.house;
+    camera.position.set(...house.position);
+    controls.target.set(...house.target);
+    camera.fov = house.fov;
+    camera.updateProjectionMatrix();
+    setActiveViewPreset("house");
+    setTimeout(() => {
+      if (activeViewPreset === "house") goToViewPreset("hero", 3.2);
+    }, 1800);
+  } else {
+    const start = new THREE.Vector3(...CAMERA_PRESETS.hero.position)
+      .multiplyScalar(1.8)
+      .setY(CAMERA_PRESETS.hero.position[1] + 1.2);
+    camera.position.copy(start);
+    goToViewPreset("hero", 2.2);
+  }
   setTimeout(() => {
     allowMidiAutoConnect = true;
     maybeAutoConnectMidi();
@@ -959,6 +1047,7 @@ async function init() {
   ui.viewFront.addEventListener("click", () => goToViewPreset("front"));
   ui.viewTop.addEventListener("click", () => goToViewPreset("top"));
   ui.viewSeated.addEventListener("click", () => goToViewPreset("seated"));
+  ui.viewHouse.addEventListener("click", () => goToViewPreset("house"));
 
   ui.menuToggle.addEventListener("click", toggleDrawer);
   ui.drawerClose.addEventListener("click", closeDrawer);
@@ -1141,7 +1230,8 @@ function animate() {
 
   const tweening = cameraTween.active;
   updateCameraTween(dt);
-  const cameraMoved = controls.update() || tweening;
+  let cameraMoved = controls.update() || tweening;
+  if (inHall && clampToHall(camera.position, hall.bounds)) cameraMoved = true;
 
   const poseLive = poseTail > 0;
   poseTail = Math.max(0, poseTail - dt);

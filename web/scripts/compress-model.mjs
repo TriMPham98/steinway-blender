@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * Derive the web-served model from the Blender export:
- *   public/models/steinway.glb  →  public/models/steinway.min.glb
+ * Derive the web-served models from the Blender exports:
+ *   public/models/steinway.glb      →  public/models/steinway.min.glb
+ *   public/models/carnegie_hall.glb →  public/models/carnegie_hall.min.glb (optional)
  *
  * Geometry is meshopt-compressed WITHOUT quantization, so vertex positions are
  * bit-identical to the export. That matters here: the viewer's z-fight fixes
@@ -25,24 +26,15 @@ import { MeshoptDecoder, MeshoptEncoder } from "meshoptimizer";
 import sharp from "sharp";
 
 const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const src = path.join(webRoot, "public", "models", "steinway.glb");
-const dst = path.join(webRoot, "public", "models", "steinway.min.glb");
+const models = path.join(webRoot, "public", "models");
 const force = process.argv.includes("--force");
 
-if (!fs.existsSync(src)) {
-  console.error(`[compress-model] missing ${path.relative(webRoot, src)} — export it from Blender first`);
-  process.exit(1);
-}
-if (
-  !force &&
-  fs.existsSync(dst) &&
-  fs.statSync(dst).mtimeMs >= fs.statSync(src).mtimeMs
-) {
-  console.log(`[compress-model] ${path.relative(webRoot, dst)} is up to date`);
-  process.exit(0);
-}
+const JOBS = [
+  { name: "steinway", required: true },
+  // The hall is optional: without it the viewer keeps the studio floor.
+  { name: "carnegie_hall", required: false },
+];
 
-const t0 = Date.now();
 await MeshoptEncoder.ready;
 await MeshoptDecoder.ready;
 const io = new NodeIO()
@@ -52,23 +44,48 @@ const io = new NodeIO()
     "meshopt.decoder": MeshoptDecoder,
   });
 
-const doc = await io.read(src);
-await doc.transform(
-  reorder({ encoder: MeshoptEncoder, target: "size" }),
-  textureCompress({ encoder: sharp, targetFormat: "webp", quality: 90 }),
-);
-doc
-  .createExtension(EXTMeshoptCompression)
-  .setRequired(true)
-  // QUANTIZE = plain meshopt byte codec, no lossy filters. Since we never call
-  // quantize(), attributes stay float32 and decode losslessly.
-  .setEncoderOptions({ method: EXTMeshoptCompression.EncoderMethod.QUANTIZE });
+for (const job of JOBS) {
+  const src = path.join(models, `${job.name}.glb`);
+  const dst = path.join(models, `${job.name}.min.glb`);
+  if (!fs.existsSync(src)) {
+    if (job.required) {
+      console.error(`[compress-model] missing ${path.relative(webRoot, src)} — export it from Blender first`);
+      process.exit(1);
+    }
+    console.warn(`[compress-model] no ${path.relative(webRoot, src)} — skipping`);
+    continue;
+  }
+  if (
+    !force &&
+    fs.existsSync(dst) &&
+    fs.statSync(dst).mtimeMs >= fs.statSync(src).mtimeMs
+  ) {
+    console.log(`[compress-model] ${path.relative(webRoot, dst)} is up to date`);
+    continue;
+  }
+  await compress(src, dst);
+}
 
-const tmp = `${dst}.tmp`;
-fs.writeFileSync(tmp, await io.writeBinary(doc));
-fs.renameSync(tmp, dst);
+async function compress(src, dst) {
+  const t0 = Date.now();
+  const doc = await io.read(src);
+  await doc.transform(
+    reorder({ encoder: MeshoptEncoder, target: "size" }),
+    textureCompress({ encoder: sharp, targetFormat: "webp", quality: 90 }),
+  );
+  doc
+    .createExtension(EXTMeshoptCompression)
+    .setRequired(true)
+    // QUANTIZE = plain meshopt byte codec, no lossy filters. Since we never call
+    // quantize(), attributes stay float32 and decode losslessly.
+    .setEncoderOptions({ method: EXTMeshoptCompression.EncoderMethod.QUANTIZE });
 
-const mb = (f) => (fs.statSync(f).size / 1e6).toFixed(1);
-console.log(
-  `[compress-model] ${mb(src)} MB → ${mb(dst)} MB (${((Date.now() - t0) / 1000).toFixed(1)}s)`,
-);
+  const tmp = `${dst}.tmp`;
+  fs.writeFileSync(tmp, await io.writeBinary(doc));
+  fs.renameSync(tmp, dst);
+
+  const mb = (f) => (fs.statSync(f).size / 1e6).toFixed(1);
+  console.log(
+    `[compress-model] ${path.basename(src)}: ${mb(src)} MB → ${mb(dst)} MB (${((Date.now() - t0) / 1000).toFixed(1)}s)`,
+  );
+}

@@ -7,6 +7,20 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 The version here tracks `version` in
 `extension/steinway_midi_piano/blender_manifest.toml`.
 
+## [Unreleased]
+
+### Added
+- **Carnegie Hall.** `scripts/build_carnegie_hall.py` builds the Stern
+  Auditorium in code around the piano: the arched gold proscenium and vaulted
+  stage shell, a plank stage, about 1,000 parquet seats in curved rows, the
+  First and Second Tier boxes, the Dress Circle and Balcony, and the oval
+  ceiling dome with its rings of lights. It saves the playable piano on stage
+  as `assets/steinway_carnegie_hall.blend` and exports the hall to the web
+  viewer, which now opens in the hall on a view from the stalls (also the new
+  **From the stalls** view, key `5`) before sweeping in to the piano. The drawer's **Stage** toggle (or
+  `?stage=studio`) switches back to the studio floor, and the choice is
+  remembered.
+
 ## [0.8.0] - 2026-10-06
 
 ### Changed

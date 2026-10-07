@@ -469,6 +469,14 @@ body,
     border-color 0.2s ease;
 }
 
+.views button.wide {
+  grid-column: 1 / -1;
+}
+
+.views button[hidden] {
+  display: none;
+}
+
 .views button.is-active {
   background: rgba(110, 168, 254, 0.2);
   border-color: rgba(110, 168, 254, 0.65);
