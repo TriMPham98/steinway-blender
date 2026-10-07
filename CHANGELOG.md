@@ -20,6 +20,12 @@ The version here tracks `version` in
   **From the stalls** view, key `5`) before sweeping in to the piano. The drawer's **Stage** toggle (or
   `?stage=studio`) switches back to the studio floor, and the choice is
   remembered.
+- **Hall detail and baked lighting.** Coffered arch soffit with rosettes, gilt
+  panel frames along every tier front, red damask lining the boxes, ribbed
+  ceiling and dome, tall arched wall panels, doors with exit signs, aisle
+  runners and stage-shell doors. Lighting is baked per vertex in Cycles and the
+  hall renders with unlit materials plus a shadow catcher for the piano; in the
+  hero view it costs 7.1 ms/frame against the studio's 9.2 ms (M1 Pro, DPR 2).
 
 ## [0.8.0] - 2026-10-06
 

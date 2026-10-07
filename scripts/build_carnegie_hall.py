@@ -10,7 +10,14 @@ Everything is generated from code (bmesh) — no source .blend or downloads:
 * the raked parquet with curved rows of red seats,
 * the horseshoe of First Tier and Second Tier boxes, the Dress Circle and the
   steep Balcony, each with a cream-and-gold parapet and under-tier lamps,
-* the ceiling with the oval dome and its rings of bulbs.
+* the ceiling with the oval dome and its rings of bulbs,
+* the trim that makes it read as the real room: coffered arch reveal, gilt
+  panel frames on every tier front, red damask in the boxes, ribbed ceiling
+  and dome, arched wall panels, doors with exit signs, aisle runners.
+
+Lighting is baked with Cycles into vertex colours (stage wash, front-of-house
+key, dome and under-tier lamps, bounce light and occlusion), so the viewer
+draws the hall unlit at almost no cost.
 
 The hall is laid out in the piano's own frame: stage top at Z=0 under the feet,
 keyboard (-Y) toward stage right, so the curved side and the open lid face the
@@ -23,8 +30,8 @@ Outputs:
   stage lights and a house camera (skip with ``--no-blend``).
 * ``web/public/models/carnegie_hall.glb`` — the hall alone, in the same world
   coordinates as ``steinway.glb``, so the viewer applies the piano's framing
-  offset and the two line up. Vertex colour ``Hall_Light`` carries a baked
-  stage-to-house light falloff for the web viewer (Blender renders ignore it).
+  offset and the two line up. Vertex colour ``Hall_Light`` is the baked
+  lighting times a per-face tone (plank tones); Blender renders ignore it.
 """
 
 from __future__ import annotations
@@ -38,9 +45,17 @@ import time
 import bmesh
 import bpy
 from mathutils import Vector
+from mathutils.bvhtree import BVHTree
 
 COLLECTION = "Carnegie_Hall"
-LIGHT_ATTR = "Hall_Light"
+LIGHT_ATTR = "Hall_Light"  # exported: baked light x tone
+TONE_ATTR = "Hall_Tone"  # per-face albedo variation (plank tones)
+BAKE_ATTR = "Hall_Bake"
+BAKE_SAMPLES = 384
+BAKE_SMOOTH = 2  # neighbour-averaging passes over the per-vertex bake
+# Large faces are split so the per-vertex bake has enough samples to resolve
+# light pools and contact shadows.
+MAX_EDGE = 1.0
 
 # --- Plan (metres; X = toward the house, Y = across, Z = up) ---------------
 STAGE_TOP = -0.003  # a hair under the piano's feet so casters don't z-fight
@@ -80,13 +95,16 @@ SEAT_PITCH = 0.56
 MATERIALS = {
     # name: (base colour (linear), metallic, roughness, emission strength)
     "Hall_Plaster": ((0.78, 0.69, 0.53), 0.0, 0.75, 0.0),
-    "Hall_Gold": ((0.72, 0.50, 0.17), 1.0, 0.34, 0.0),
-    "Hall_Velvet": ((0.33, 0.025, 0.03), 0.0, 0.9, 0.0),
+    "Hall_Gold": ((0.86, 0.64, 0.27), 1.0, 0.32, 0.0),
+    "Hall_Velvet": ((0.22, 0.018, 0.022), 0.0, 0.9, 0.0),
     "Hall_Carpet": ((0.20, 0.03, 0.035), 0.0, 0.95, 0.0),
     "Hall_Stage_Wood": ((0.36, 0.20, 0.09), 0.0, 0.42, 0.0),
     "Hall_Dark_Wood": ((0.09, 0.045, 0.025), 0.0, 0.5, 0.0),
+    "Hall_Fabric": ((0.25, 0.03, 0.035), 0.0, 0.85, 0.0),
     "Hall_Bulb": ((1.0, 0.86, 0.62), 0.0, 0.4, 6.0),
+    "Hall_Exit": ((1.0, 0.08, 0.04), 0.0, 0.4, 4.0),
 }
+UNBAKED = {"Hall_Bulb", "Hall_Exit"}  # self-lit: exported at full brightness
 
 
 def _repo_root():
@@ -104,30 +122,29 @@ def smoothstep(e0, e1, x):
     return t * t * (3 - 2 * t)
 
 
-def house_light(p):
-    """Fake bounce light: bright on stage, falling off into the house."""
-    stage = Vector((-3.0, 0.0, 4.0))
-    d = (p - stage).length
-    falloff = 0.5 + 0.5 * math.exp(-d / 20.0)
-    # The upper house sits in the glow of the dome lights.
-    dome = 0.12 * smoothstep(12.0, CEILING_Z, p.z)
-    return min(falloff + dome, 1.0)
-
-
 class Kit:
-    """One bmesh per material; every face gets a Hall_Light vertex colour."""
+    """One bmesh per material; every face corner carries a Hall_Tone value."""
 
     def __init__(self):
         self.meshes = {}
+        self._solid = None  # centre of the closed solid being built (box/bulb)
 
     def _bm(self, mat):
         if mat not in self.meshes:
             bm = bmesh.new()
-            bm.loops.layers.float_color.new(LIGHT_ATTR)
+            bm.loops.layers.float_color.new(TONE_ATTR)
+            bm.faces.layers.int.new("solid")
             self.meshes[mat] = bm
         return self.meshes[mat]
 
-    def face(self, mat, pts, shade=1.0, smooth=False):
+    def face(self, mat, pts, tone=1.0, smooth=False):
+        """Add a face; quads longer than MAX_EDGE become a grid of quads."""
+        if len(pts) == 4:
+            a, b, c, d = (Vector(p) for p in pts)
+            nu = min(48, math.ceil(max((b - a).length, (c - d).length) / MAX_EDGE))
+            nv = min(48, math.ceil(max((d - a).length, (c - b).length) / MAX_EDGE))
+            if nu * nv > 1:
+                return self._grid(mat, a, b, c, d, nu, nv, tone, smooth)
         bm = self._bm(mat)
         verts = [bm.verts.new(p) for p in pts]
         try:
@@ -136,21 +153,44 @@ class Kit:
             for v in verts:
                 bm.verts.remove(v)
             return None
-        f.smooth = smooth
-        layer = bm.loops.layers.float_color[LIGHT_ATTR]
-        for loop in f.loops:
-            k = shade * house_light(loop.vert.co)
-            loop[layer] = (k, k, k, 1.0)
+        self._finish(bm, f, tone, smooth)
         return f
 
-    def strip(self, mat, a, b, shade=1.0, smooth=False, closed=False):
+    def _grid(self, mat, a, b, c, d, nu, nv, tone, smooth):
+        bm = self._bm(mat)
+        grid = [
+            [bm.verts.new((a.lerp(b, i / nu)).lerp(d.lerp(c, i / nu), j / nv)) for j in range(nv + 1)]
+            for i in range(nu + 1)
+        ]
+        for i in range(nu):
+            for j in range(nv):
+                quad = (grid[i][j], grid[i + 1][j], grid[i + 1][j + 1], grid[i][j + 1])
+                try:
+                    f = bm.faces.new(quad)
+                except ValueError:
+                    continue
+                self._finish(bm, f, tone, smooth)
+
+    def _finish(self, bm, f, tone, smooth):
+        f.smooth = smooth
+        if self._solid is not None:
+            # Faces of a closed solid point away from its centre.
+            f.normal_update()
+            if f.normal.dot(f.calc_center_median() - self._solid) < 0:
+                f.normal_flip()
+            f[bm.faces.layers.int["solid"]] = 1
+        layer = bm.loops.layers.float_color[TONE_ATTR]
+        for loop in f.loops:
+            loop[layer] = (tone, tone, tone, 1.0)
+
+    def strip(self, mat, a, b, tone=1.0, smooth=False, closed=False):
         """Quads bridging two equal-length polylines."""
         n = len(a)
         for i in range(n if closed else n - 1):
             j = (i + 1) % n
-            self.face(mat, (a[i], a[j], b[j], b[i]), shade, smooth)
+            self.face(mat, (a[i], a[j], b[j], b[i]), tone, smooth)
 
-    def box(self, mat, center, fwd, size, shade=1.0, bottom=False):
+    def box(self, mat, center, fwd, size, tone=1.0, bottom=False):
         """Oriented box: ``fwd`` is the local +X in the XY plane, size = (x, y, z)."""
         fwd = Vector((fwd.x, fwd.y, 0)).normalized()
         side = Vector((-fwd.y, fwd.x, 0))
@@ -169,8 +209,10 @@ class Kit:
         ]
         if bottom:
             faces.append(((-1, 1, -1), (1, 1, -1), (1, -1, -1), (-1, -1, -1)))
+        self._solid = center
         for quad in faces:
-            self.face(mat, [c(*q) for q in quad], shade)
+            self.face(mat, [c(*q) for q in quad], tone)
+        self._solid = None
 
     def bulb(self, center, r=0.07):
         """Low-poly octahedron lamp."""
@@ -179,8 +221,10 @@ class Kit:
         bot = center - Vector((0, 0, r))
         for i in range(4):
             a, b = center + axes[i], center + axes[(i + 1) % 4]
+            self._solid = center
             self.face("Hall_Bulb", (a, b, top))
             self.face("Hall_Bulb", (b, a, bot))
+            self._solid = None
 
 
 # --- 2D helpers -------------------------------------------------------------
@@ -321,11 +365,64 @@ def parquet_z(x):
     return PARQUET_Z + PARQUET_RAKE * smoothstep(PROSC_X, HALL_BACK_X, x)
 
 
-def add_seat(kit, base, facing, shade=1.0):
+def on_straight(p, margin):
+    """True where a horseshoe point is on a straight run, ``margin`` clear of a corner."""
+    return (p.x < HALL_BACK_X - HALL_CORNER_R - margin
+            or abs(p.y) < HALL_HALF_W - HALL_CORNER_R - margin)
+
+
+def add_frame(kit, p, t, z0, z1, w, bar=0.05, mat="Hall_Gold"):
+    """Rectangular moulding frame on a vertical face through ``p`` along ``t``."""
+    h = w / 2
+
+    def q(u, v):
+        return Vector((p.x + t.x * u, p.y + t.y * u, v))
+
+    for u0, u1, v0, v1 in ((-h, h, z0, z0 + bar), (-h, h, z1 - bar, z1),
+                           (-h, -h + bar, z0 + bar, z1 - bar), (h - bar, h, z0 + bar, z1 - bar)):
+        kit.face(mat, [q(u0, v0), q(u1, v0), q(u1, v1), q(u0, v1)])
+
+
+def arch_fill(kit, mat, half_w, bottom, spring, rise, to3d, cols=16, tone=1.0):
+    """Solid arch-headed panel as vertical columns (subdivided for the bake)."""
+
+    def top(u):
+        return spring + rise * math.sqrt(max(0.0, 1 - (u / half_w) ** 2))
+
+    for i in range(cols):
+        u0 = -half_w + 2 * half_w * i / cols
+        u1 = -half_w + 2 * half_w * (i + 1) / cols
+        kit.face(mat, [to3d(u0, bottom), to3d(u1, bottom), to3d(u1, top(u1)), to3d(u0, top(u0))], tone)
+
+
+def arch_frame(kit, half_w, bottom, spring, rise, w, to3d, mat="Hall_Gold"):
+    """Gilt moulding round an arch-headed opening (both outlines closed below)."""
+    inner = arch_outline(half_w, spring, rise, bottom=bottom)
+    outer = arch_outline(half_w + w, spring, rise + w, bottom=bottom - w)
+    center = (0.0, (bottom + spring) / 2)
+    a, b = ring(inner, outer, center)
+    kit.strip(mat, [to3d(*p) for p in a], [to3d(*p) for p in b], closed=True)
+
+
+def add_door(kit, a, b, floor, height=2.1, exit_sign=False):
+    """Dark wood door from ``a`` to ``b`` (both on the face) with a gilt frame."""
+    t = (b - a).normalized()
+    mid = (a + b) / 2
+    w = (b - a).length
+    kit.face("Hall_Dark_Wood", [Vector((a.x, a.y, floor)), Vector((b.x, b.y, floor)),
+                                Vector((b.x, b.y, floor + height)), Vector((a.x, a.y, floor + height))])
+    n = Vector((-t.y, t.x, 0))  # off the face, toward the viewer
+    add_frame(kit, mid + n * 0.01, t, floor, floor + height + 0.12, w + 0.24, 0.1)
+    if exit_sign:
+        kit.box("Hall_Exit", mid + n * 0.06 + Vector((0, 0, floor + height + 0.3)),
+                n, (0.1, 0.62, 0.22))
+
+
+def add_seat(kit, base, facing, tone=1.0):
     """A theatre seat: cushion box + upholstered back, gilt-free and low-poly."""
     f = Vector((facing.x, facing.y, 0)).normalized()
-    kit.box("Hall_Velvet", base + f * 0.05 + Vector((0, 0, 0.42)), f, (0.44, 0.5, 0.1), shade)
-    kit.box("Hall_Velvet", base - f * 0.22 + Vector((0, 0, 0.5)), f, (0.09, 0.52, 1.0), shade)
+    kit.box("Hall_Velvet", base + f * 0.05 + Vector((0, 0, 0.42)), f, (0.44, 0.5, 0.1), tone)
+    kit.box("Hall_Velvet", base - f * 0.22 + Vector((0, 0, 0.5)), f, (0.09, 0.52, 1.0), tone)
 
 
 # --- Building blocks --------------------------------------------------------
@@ -401,6 +498,16 @@ def build_stage(kit):
         ])
 
 
+def build_back_wall(kit, back):
+    """Stage back wall: columns under the shell's own back profile points, so
+    its top edge meets the vault exactly (coarser chords leave slivers)."""
+    for p, q in zip(back, back[1:]):
+        if abs(q.y - p.y) < 1e-6:
+            continue  # a vertical jamb segment
+        kit.face("Hall_Plaster", [Vector((STAGE_BACK_X, p.y, STAGE_TOP)), Vector((STAGE_BACK_X, q.y, STAGE_TOP)),
+                                  q.copy(), p.copy()])
+
+
 def build_proscenium_and_shell(kit):
     opening = arch_outline(ARCH_HALF_W, ARCH_SPRING, ARCH_RISE)
     frame = [(-HALL_HALF_W, PARQUET_Z - 0.05), (HALL_HALF_W, PARQUET_Z - 0.05),
@@ -433,8 +540,8 @@ def build_proscenium_and_shell(kit):
         t = i / 8
         loops.append([r.lerp(bk, t) for r, bk in zip(reveal, back)])
     for la, lb in zip(loops, loops[1:]):
-        kit.strip("Hall_Plaster", la, lb, shade=0.95, smooth=True)
-    kit.face("Hall_Plaster", list(reversed(back)), 0.9)
+        kit.strip("Hall_Plaster", la, lb, smooth=True)
+    build_back_wall(kit, back)
 
     # Back wall: nested gilt arches framing an inset panel.
     bc = (0.0, 5.0)
@@ -452,7 +559,7 @@ def build_proscenium_and_shell(kit):
         hz = ARCH_SPRING * (1 - t * (1 - SHELL_TAPER_Z))
         for sign in (-1, 1):
             c = Vector((x, sign * (hw - 0.05), hz / 2))
-            kit.box("Hall_Plaster", c, Vector((1, 0, 0)), (0.5, 0.12, hz), 0.97)
+            kit.box("Hall_Plaster", c, Vector((1, 0, 0)), (0.5, 0.12, hz))
             kit.box("Hall_Gold", Vector((x, sign * (hw - 0.08), hz - 0.25)),
                     Vector((1, 0, 0)), (0.62, 0.18, 0.5))
     for sign in (-1, 1):
@@ -467,15 +574,15 @@ def build_house(kit):
     xs = [PROSC_X + (HALL_BACK_X - PROSC_X) * i / 40 for i in range(41)]
     left = [Vector((x, -wall_half_width(x), parquet_z(x))) for x in xs]
     right = [Vector((x, wall_half_width(x), parquet_z(x))) for x in xs]
-    kit.strip("Hall_Carpet", left, right, shade=0.9)
+    kit.strip("Hall_Carpet", left, right)
 
     # Walls round the horseshoe, up to the ceiling.
     wall, _ = horseshoe(0.0, PROSC_X)
-    kit.strip("Hall_Plaster", at_z(wall, PARQUET_Z - 0.05), at_z(wall, CEILING_Z), shade=0.9)
+    kit.strip("Hall_Plaster", at_z(wall, PARQUET_Z - 0.05), at_z(wall, CEILING_Z))
     # Gilt cornice and a dado rail.
     wall_in, _ = horseshoe(0.04, PROSC_X)
     kit.strip("Hall_Gold", at_z(wall_in, CEILING_Z - 0.55), at_z(wall_in, CEILING_Z - 0.05))
-    kit.strip("Hall_Dark_Wood", at_z(wall_in, PARQUET_Z), at_z(wall_in, PARQUET_Z + 1.1), shade=0.8)
+    kit.strip("Hall_Dark_Wood", at_z(wall_in, PARQUET_Z), at_z(wall_in, PARQUET_Z + 1.1))
 
     # Ceiling: an annulus between the plan and the dome's oval opening.
     plan = [(p.x, p.y) for p in wall]  # closes along the proscenium wall
@@ -528,8 +635,101 @@ def build_house(kit):
             if 4.0 < abs(p.y) < 5.2:
                 continue
             p.z = parquet_z(p.x)
-            add_seat(kit, p, focus - p, 0.95)
+            add_seat(kit, p, focus - p)
         x += ROW_PITCH * 1.05
+
+
+def build_trim(kit):
+    """Ornament and fittings that make the room read as Carnegie Hall."""
+    # Coffered reveal: gilt ribs across the arch soffit with rosettes between.
+    profile = [Vector((PROSC_X, y, z)) for y, z in
+               arch_outline(ARCH_HALF_W, ARCH_SPRING, ARCH_RISE, closed=False)]
+    marks = resample(profile, 1.3)
+    for i, (p, t) in enumerate(marks):
+        n = Vector((0, t.z, -t.y))  # into the opening
+        if p.z < ARCH_SPRING - 0.1:  # coffers on the arch head only
+            continue
+        a = p + n * 0.03
+        kit.face("Hall_Gold", [a - t * 0.08, a + t * 0.08,
+                               a + t * 0.08 - Vector((REVEAL, 0, 0)), a - t * 0.08 - Vector((REVEAL, 0, 0))])
+        if i + 1 < len(marks):
+            mid = (p + marks[i + 1][0]) / 2 + n * 0.08 - Vector((REVEAL / 2, 0, 0))
+            kit.box("Hall_Gold", mid, Vector((1, 0, 0)), (0.24, 0.24, 0.24))
+
+    # Ceiling: gilt ribs from the dome out to the walls, and an outer oval.
+    wall, _ = horseshoe(0.0, PROSC_X)
+    plan = [(p.x, p.y) for p in wall]
+    oval = ellipse(DOME_CX, 0.0, DOME_A, DOME_B, 64)
+    a, b = ring(oval, plan, (DOME_CX, 0.0))
+    zc = CEILING_Z - 0.03
+    for i in range(0, len(a), 6):
+        pa, pb = Vector((*a[i], zc)), Vector((*b[i], zc))
+        d = (pb - pa).normalized()
+        side = Vector((-d.y, d.x, 0)) * 0.15
+        kit.face("Hall_Gold", [pa - side, pb - side, pb + side, pa + side])
+    ra = [Vector((x, y, zc - 0.01)) for x, y in ellipse(DOME_CX, 0.0, DOME_A, DOME_B, 64, 1.30)]
+    rb = [Vector((x, y, zc - 0.01)) for x, y in ellipse(DOME_CX, 0.0, DOME_A, DOME_B, 64, 1.34)]
+    kit.strip("Hall_Gold", ra, rb, closed=True)
+
+    # Dome: gilt meridian ribs from the rim up to the inner ring.
+    phi_top = math.acos(0.6)
+    for k in range(20):
+        th = math.tau * k / 20
+        left, right = [], []
+        for j in range(7):
+            phi = phi_top * j / 6
+            sc = math.cos(phi) * 0.995
+            z = CEILING_Z + DOME_H * math.sin(phi) - 0.04
+            d = 0.15 / (0.5 * (DOME_A + DOME_B) * sc)
+            for th2, out in ((th - d, left), (th + d, right)):
+                out.append(Vector((DOME_CX + DOME_A * sc * math.cos(th2),
+                                   DOME_B * sc * math.sin(th2), z)))
+        kit.strip("Hall_Gold", left, right, smooth=True)
+
+    # Tall arched panels on the side walls between the proscenium and the
+    # Dress Circle, framed in gilt with damask fields.
+    for sign in (-1, 1):
+        y = sign * (HALL_HALF_W - 0.03)
+
+        def wall_pt(u, v, y=y):
+            return Vector((5.3 + u, y, v))
+
+        arch_fill(kit, "Hall_Fabric", 1.9, 10.2, 18.5, 1.9, wall_pt, cols=6)
+        arch_frame(kit, 1.9, 10.2, 18.5, 1.9, 0.22,
+                   lambda u, v, y=y: Vector((5.3 + u, y + sign * -0.01, v)))
+
+    # Doors with exit signs: back of the parquet and along the side walls.
+    xb = HALL_BACK_X - 0.05
+    floor = parquet_z(HALL_BACK_X)
+    for yc in (-2.4, 2.4):
+        add_door(kit, Vector((xb, yc - 0.75, 0)), Vector((xb, yc + 0.75, 0)), floor, exit_sign=True)
+    for x in (12.0, 20.0):
+        for sign in (-1, 1):
+            y = sign * (HALL_HALF_W - 0.05)
+            a, b = Vector((x - 0.75, y, 0)), Vector((x + 0.75, y, 0))
+            if sign > 0:
+                a, b = b, a
+            add_door(kit, a, b, parquet_z(x), exit_sign=x > 15)
+
+    # Darker runners down the two aisles.
+    xs = [STAGE_FRONT_X + 2.0 + (HALL_BACK_X - 1.6 - STAGE_FRONT_X - 2.0) * i / 24 for i in range(25)]
+    for sign in (-1, 1):
+        lo = [Vector((x, sign * 4.05, parquet_z(x) + 0.006)) for x in xs]
+        hi = [Vector((x, sign * 5.15, parquet_z(x) + 0.006)) for x in xs]
+        kit.strip("Hall_Carpet", lo if sign > 0 else hi, hi if sign > 0 else lo, 0.7)
+
+    # Side doors into the stage shell near the back wall.
+    def shell_hw(x):
+        t = (PROSC_X - REVEAL - x) / (PROSC_X - REVEAL - STAGE_BACK_X)
+        return ARCH_HALF_W * (1 - t * (1 - SHELL_TAPER_Y))
+
+    for sign in (-1, 1):
+        x0, x1 = -9.35, -7.95
+        a = Vector((x0, sign * (shell_hw(x0) - 0.03), 0))
+        b = Vector((x1, sign * (shell_hw(x1) - 0.03), 0))
+        if sign > 0:
+            a, b = b, a
+        add_door(kit, a, b, STAGE_TOP, height=2.6)
 
 
 def build_tier(kit, name, z, x_start, depth, rows, boxes, step):
@@ -546,29 +746,39 @@ def build_tier(kit, name, z, x_start, depth, rows, boxes, step):
         za = z + step * k
         a, _ = horseshoe(edges[k], x_start)
         b, _ = horseshoe(edges[k + 1], x_start)
-        kit.strip("Hall_Carpet", at_z(a, za), at_z(b, za), 0.8)
+        kit.strip("Hall_Carpet", at_z(a, za), at_z(b, za))
         if k + 1 < rows and step > 0:
-            kit.strip("Hall_Dark_Wood", at_z(b, za), at_z(b, za + step), 0.7)
+            kit.strip("Hall_Dark_Wood", at_z(b, za), at_z(b, za + step))
 
     # Soffit and the face of the slab.
-    kit.strip("Hall_Plaster", at_z(wall, soffit_z), at_z(rail, soffit_z), 0.6)
+    kit.strip("Hall_Plaster", at_z(wall, soffit_z), at_z(rail, soffit_z))
     # Parapet: plaster front with gilt mouldings and a velvet capping.
     cap_z = z + 0.95
     front = horseshoe(depth + 0.02, x_start)[0]
-    kit.strip("Hall_Plaster", at_z(rail, soffit_z), at_z(rail, cap_z), 0.95)
+    kit.strip("Hall_Plaster", at_z(rail, soffit_z), at_z(rail, cap_z))
     back = horseshoe(depth - 0.18, x_start)[0]
-    kit.strip("Hall_Plaster", at_z(back, cap_z), at_z(back, z), 0.8)
+    kit.strip("Hall_Plaster", at_z(back, cap_z), at_z(back, z))
     kit.strip("Hall_Velvet", at_z(rail, cap_z), at_z(back, cap_z))
     kit.strip("Hall_Gold", at_z(front, cap_z - 0.16), at_z(front, cap_z - 0.04))
     kit.strip("Hall_Gold", at_z(front, soffit_z + 0.05), at_z(front, soffit_z + 0.22))
     kit.strip("Hall_Gold", at_z(front, z + 0.15), at_z(front, z + 0.25))
+    # Gilt panel frames along the straight runs of the parapet front.
+    face_path = horseshoe(depth + 0.035, x_start)[0]
+    for p, t in resample(face_path, 1.7):
+        if p.x > x_start + 0.9 and on_straight(p, 0.7):
+            add_frame(kit, p, t, z + 0.32, cap_z - 0.24, 1.3)
+    # Red damask lining the boxes.
+    if boxes:
+        lining = horseshoe(0.02, x_start)[0]
+        kit.strip("Hall_Fabric", at_z(lining, z), at_z(lining, z + 2.6))
+
     # End caps, a hair beyond the tier so the tread edges don't z-fight them.
     for i in (0, -1):
         x = x_start - 0.01
         kit.face("Hall_Plaster", [Vector((x, rail[i].y, soffit_z)),
                                   Vector((x, wall[i].y, soffit_z)),
                                   Vector((x, wall[i].y, top_z + 1.0)),
-                                  Vector((x, rail[i].y, cap_z))], 0.85)
+                                  Vector((x, rail[i].y, cap_z))])
 
     # Lamps along the soffit edge.
     line = at_z(horseshoe(depth - 0.25, x_start)[0], soffit_z - 0.09)
@@ -581,7 +791,7 @@ def build_tier(kit, name, z, x_start, depth, rows, boxes, step):
             n = Vector((tangent.y, -tangent.x, 0))  # outward (toward the wall)
             # From behind the parapet back to the wall.
             c = p + n * ((depth + 0.18) / 2) + Vector((0, 0, 0.8))
-            kit.box("Hall_Plaster", c, n, (depth - 0.18, 0.07, 1.6), 0.85)
+            kit.box("Hall_Plaster", c, n, (depth - 0.18, 0.07, 1.6))
 
     # Seats, one row per tread, facing in across the hall.
     for k in range(rows):
@@ -594,7 +804,7 @@ def build_tier(kit, name, z, x_start, depth, rows, boxes, step):
                 continue
             inward = Vector((-tangent.y, tangent.x, 0))
             p = Vector((p.x, p.y, z + step * k))
-            add_seat(kit, p, inward, 0.8)
+            add_seat(kit, p, inward)
     return name
 
 
@@ -634,6 +844,53 @@ def clear_previous():
     bpy.data.collections.remove(coll)
 
 
+def orient_faces(meshes):
+    """Point every open face toward the room, so the bake lights the right side.
+
+    The procedural surfaces are wound arbitrarily, and Cycles bakes the side a
+    normal points to. For each face, look both ways: the side with the longer
+    clear view is the room (a wall's back sees nothing, a soffit's top sees
+    the tier floor 0.6 m up, a parapet's inner face sees its back 0.18 m away).
+    Each side casts a small fan of rays, so a pilaster right in front of a
+    wall doesn't make the wall's back look more open than the stage.
+    Closed solids (seats, boxes, lamps) were already oriented outward.
+    """
+    verts, polys = [], []
+    for bm in meshes.values():
+        base = len(verts)
+        bm.verts.index_update()
+        verts.extend(v.co.copy() for v in bm.verts)
+        polys.extend([base + v.index for v in f.verts] for f in bm.faces)
+    tree = BVHTree.FromPolygons(verts, polys, all_triangles=False)
+
+    def clearance(origin, n):
+        # Normal plus four rays tilted 45 degrees; escaping counts as zero
+        # (that side is outside the hall).
+        t = n.orthogonal().normalized()
+        b = n.cross(t)
+        total = 0.0
+        for d in (n, n + t, n - t, n + b, n - b):
+            hit = tree.ray_cast(origin, d.normalized())
+            total += hit[3] if hit[0] is not None else 0.0
+        return total
+
+    flipped = 0
+    for bm in meshes.values():
+        solid = bm.faces.layers.int["solid"]
+        for f in bm.faces:
+            if f[solid]:
+                continue
+            f.normal_update()
+            n = f.normal
+            if n.length < 0.5:
+                continue
+            c = f.calc_center_median()
+            if clearance(c - n * 0.004, -n) > clearance(c + n * 0.004, n):
+                f.normal_flip()
+                flipped += 1
+    print(f"[carnegie] oriented normals ({flipped:,} faces flipped)")
+
+
 def build():
     clear_previous()
     coll = bpy.data.collections.new(COLLECTION)
@@ -645,7 +902,9 @@ def build():
     build_house(kit)
     for tier in TIERS:
         build_tier(kit, *tier)
+    build_trim(kit)
 
+    orient_faces(kit.meshes)
     meshes = []
     for mat_name, bm in kit.meshes.items():
         bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=1e-5)
@@ -659,27 +918,81 @@ def build():
     return coll, meshes
 
 
-def add_stage_lighting(coll):
-    """Stage wash + house glow + a camera from the stalls, for Blender renders."""
+def add_lights(coll):
+    """Concert lighting: used for the bake, and kept in the .blend for renders."""
+    warm = (1.0, 0.84, 0.66)
+    stage = (1.0, 0.94, 0.86)
 
-    def light(name, kind, loc, energy, size=None, color=(1.0, 0.93, 0.82), aim=None):
+    def light(name, kind, loc, energy, color, aim=None, rot_z=0.0, **props):
         data = bpy.data.lights.new(name, kind)
         data.energy = energy
         data.color = color
-        if size is not None:
-            data.size = size
+        for key, value in props.items():
+            setattr(data, key, value)
         obj = bpy.data.objects.new(name, data)
         obj.location = loc
         if aim is not None:
             obj.rotation_euler = (Vector(aim) - Vector(loc)).to_track_quat("-Z", "Y").to_euler()
+        else:
+            obj.rotation_euler = (0.0, 0.0, rot_z)  # pointing straight down
         coll.objects.link(obj)
         return obj
 
-    light("Hall_Stage_Wash", "AREA", (1.0, 0.0, 11.0), 9000, size=8.0, aim=(0, 0, 0))
-    light("Hall_Front_Key", "SPOT", (14.0, -6.0, 12.0), 30000, aim=(0.2, -0.2, 0.8))
-    light("Hall_House_Glow", "AREA", (DOME_CX, 0.0, CEILING_Z - 1.0), 25000, size=14.0,
-          aim=(DOME_CX, 0.0, 0.0))
+    # Stage: a broad overhead wash plus two front-of-house keys from the ceiling.
+    light("Hall_Stage_Wash", "AREA", (-2.5, 0.0, 12.5), 16000, stage,
+          shape="RECTANGLE", size=10.0, size_y=7.0)
+    for sign in (-1, 1):
+        light(f"Hall_Front_Key_{'L' if sign < 0 else 'R'}", "SPOT", (12.0, sign * 5.0, 16.0),
+              45000, stage, aim=(0.0, 0.0, 1.0), spot_size=math.radians(38), spot_blend=0.6)
+    # House: the dome glow and the lamp rows under every tier.
+    light("Hall_Dome_Glow", "AREA", (DOME_CX, 0.0, CEILING_Z + 0.3), 90000, warm,
+          shape="ELLIPSE", size=2 * DOME_A, size_y=2 * DOME_B)
+    # Ceiling downlights over the stalls and the upper tiers.
+    for x in (6.0, 12.0, 24.0, 29.0):
+        for y in (-9.0, 0.0, 9.0):
+            if abs(y) < 1 and 9 < x < 27:
+                continue  # the dome covers the middle
+            light(f"Hall_Downlight_{int(x)}_{int(y)}", "AREA", (x, y, CEILING_Z - 0.1), 9000, warm,
+                  shape="DISK", size=2.0)
+    # A soft glow in the middle of the house lights the tier fronts, which
+    # face inward and catch nothing from the downlights.
+    light("Hall_House_Fill", "POINT", (18.0, 0.0, 9.0), 60000, warm, shadow_soft_size=3.0)
+    # Uplight into the dome, which the downward glow leaves dark.
+    light("Hall_Dome_Uplight", "AREA", (DOME_CX, 0.0, CEILING_Z - 0.6), 25000, warm,
+          aim=(DOME_CX, 0.0, CEILING_Z + 10.0), shape="ELLIPSE", size=1.6 * DOME_A, size_y=1.6 * DOME_B)
+    # Uplight into the stage vault, which the overhead wash can't reach.
+    light("Hall_Vault_Uplight", "AREA", (-4.0, 0.0, 7.0), 7000, stage, aim=(-4.0, 0.0, 20.0),
+          shape="RECTANGLE", size=8.0, size_y=6.0)
+    # Washes on the stage shell's side walls.
+    for sign in (-1, 1):
+        light(f"Hall_Shell_Wash_{'L' if sign < 0 else 'R'}", "AREA", (-3.5, sign * 3.5, 9.0), 9000,
+              stage, aim=(-3.5, sign * 9.0, 4.0), shape="RECTANGLE", size=9.0, size_y=4.0)
+    cx = HALL_BACK_X - HALL_CORNER_R
+    cy = HALL_HALF_W - HALL_CORNER_R
+    for name, z, x_start, depth, *_ in TIERS:
+        zl = z - 0.75
+        run = cx - x_start
+        w = depth * 0.6
+        for sign in (-1, 1):
+            light(f"Hall_{name}_Lamps_{'L' if sign < 0 else 'R'}", "AREA",
+                  (x_start + run / 2, sign * (HALL_HALF_W - depth / 2), zl), 220 * run * w, warm,
+                  shape="RECTANGLE", size=run, size_y=w)
+        light(f"Hall_{name}_Lamps_Back", "AREA", (HALL_BACK_X - depth / 2, 0.0, zl),
+              220 * 2 * cy * w, warm, rot_z=math.pi / 2, shape="RECTANGLE", size=2 * cy, size_y=w)
 
+
+def set_world():
+    """A dim, warm house: the hall is lit by its own lights, not the sky."""
+    scene = bpy.context.scene
+    world = scene.world or bpy.data.worlds.new("World")
+    scene.world = world
+    bg = world.node_tree.nodes.get("Background")
+    if bg:
+        bg.inputs["Color"].default_value = (0.02, 0.016, 0.012, 1.0)
+        bg.inputs["Strength"].default_value = 1.0
+
+
+def add_camera(coll):
     cam_data = bpy.data.cameras.new("Hall_Camera")
     cam_data.lens = 35
     cam = bpy.data.objects.new("Hall_Camera", cam_data)
@@ -687,6 +1000,96 @@ def add_stage_lighting(coll):
     cam.rotation_euler = (Vector((0.0, 0.0, 2.6)) - cam.location).to_track_quat("-Z", "Y").to_euler()
     coll.objects.link(cam)
     return cam
+
+
+def bake_lighting(meshes):
+    """Bake diffuse light (direct + bounce, no albedo) into each mesh's corners.
+
+    The piano and the studio rig are hidden so only the hall and its lights
+    count; metals bake as diffuse so the gilt gets occlusion like the plaster.
+    Bakes per vertex (shared corners agree, so no per-face blotches), smooths
+    the Monte Carlo noise, then writes Hall_Light = curve(bake) x Hall_Tone.
+    The curve divides by the median and applies x / (1 + x): ordinary
+    surfaces land near 0.5, the lit stage rolls off toward 1 instead of
+    clipping. Returns the median used.
+    """
+    import numpy as np
+
+    scene = bpy.context.scene
+    saved_engine = scene.render.engine
+    scene.render.engine = "CYCLES"
+    scene.cycles.samples = BAKE_SAMPLES
+    hidden = [o for o in scene.objects
+              if COLLECTION not in {c.name for c in o.users_collection} and not o.hide_render]
+    for o in hidden:
+        o.hide_render = True
+    metals = []
+    for o in meshes:
+        for mat in o.data.materials:
+            bsdf = mat.node_tree.nodes.get("Principled BSDF")
+            metals.append((bsdf, bsdf.inputs["Metallic"].default_value))
+            bsdf.inputs["Metallic"].default_value = 0.0
+
+    targets = [o for o in meshes if o.name not in UNBAKED]
+    for o in targets:
+        attr = o.data.color_attributes.new(BAKE_ATTR, "FLOAT_COLOR", "POINT")
+        o.data.color_attributes.active_color = attr
+    bpy.ops.object.select_all(action="DESELECT")
+    for o in targets:
+        o.select_set(True)
+    bpy.context.view_layer.objects.active = targets[0]
+    t0 = time.time()
+    bpy.ops.object.bake(type="DIFFUSE", pass_filter={"DIRECT", "INDIRECT"},
+                        target="VERTEX_COLORS", use_clear=True)
+    print(f"[carnegie] baked lighting in {time.time() - t0:.1f}s")
+
+    for bsdf, value in metals:
+        bsdf.inputs["Metallic"].default_value = value
+    for o in hidden:
+        o.hide_render = False
+    scene.render.engine = saved_engine
+
+    def read(mesh, name):
+        attr = mesh.color_attributes[name]
+        arr = np.empty(len(attr.data) * 4, dtype=np.float32)
+        attr.data.foreach_get("color", arr)
+        return arr.reshape(-1, 4)
+
+    baked = {}
+    for o in targets:
+        mesh = o.data
+        light = read(mesh, BAKE_ATTR)[:, :3].astype(np.float64)
+        edges = np.empty(len(mesh.edges) * 2, dtype=np.int64)
+        mesh.edges.foreach_get("vertices", edges)
+        a, b = edges[0::2], edges[1::2]
+        for _ in range(BAKE_SMOOTH):
+            acc = light.copy()
+            deg = np.ones(len(light))
+            np.add.at(acc, a, light[b])
+            np.add.at(acc, b, light[a])
+            np.add.at(deg, a, 1)
+            np.add.at(deg, b, 1)
+            light = acc / deg[:, None]
+        baked[o.name] = light
+        mesh.color_attributes.remove(mesh.color_attributes[BAKE_ATTR])
+
+    median = float(np.median(np.concatenate([v.max(axis=1) for v in baked.values()])))
+    for o in meshes:
+        mesh = o.data
+        tone = read(mesh, TONE_ATTR)
+        if o.name in baked:
+            x = baked[o.name] / max(median, 1e-6)
+            light = x / (1.0 + x.max(axis=1, keepdims=True))  # hue-preserving roll-off
+            loop_verts = np.empty(len(mesh.loops), dtype=np.int64)
+            mesh.loops.foreach_get("vertex_index", loop_verts)
+            rgb = light[loop_verts] * tone[:, :1]
+            out = np.concatenate([rgb, np.ones((len(rgb), 1))], axis=1)
+        else:
+            out = tone
+        attr = mesh.color_attributes.new(LIGHT_ATTR, "FLOAT_COLOR", "CORNER")
+        attr.data.foreach_set("color", out.astype(np.float32).ravel())
+        mesh.color_attributes.remove(mesh.color_attributes[TONE_ATTR])
+    return median
 
 
 def export_glb(meshes, out):
@@ -721,19 +1124,17 @@ def main():
     coll, meshes = build()
     tris = sum(sum(len(p.vertices) - 2 for p in o.data.polygons) for o in meshes)
     print(f"[carnegie] {len(meshes)} meshes, {tris:,} triangles")
+    add_lights(coll)
+    set_world()
+    median = bake_lighting(meshes)
+    print(f"[carnegie] bake median {median:.3f}")
 
     export_glb(meshes, out_glb)
     print(f"[carnegie] wrote {out_glb} ({os.path.getsize(out_glb) / 1e6:.1f} MB)")
 
     if "--no-blend" not in argv:
         scene = bpy.context.scene
-        scene.camera = add_stage_lighting(coll)
-        world = scene.world or bpy.data.worlds.new("World")
-        scene.world = world
-        bg = world.node_tree.nodes.get("Background")
-        if bg:
-            bg.inputs["Color"].default_value = (0.02, 0.016, 0.012, 1.0)
-            bg.inputs["Strength"].default_value = 1.0
+        scene.camera = add_camera(coll)
         bpy.ops.wm.save_as_mainfile(filepath=out_blend, copy=True)
         print(f"[carnegie] wrote {out_blend}")
     print(f"[carnegie] done in {time.time() - t0:.1f}s")

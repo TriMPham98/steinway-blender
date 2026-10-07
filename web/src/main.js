@@ -11,7 +11,13 @@ import { PianoAudio } from "./audio.js";
 import { MIDI_HIGH, MIDI_LOW } from "./anim.js";
 import { backendAvailable, findDefaultPort, listInputPorts } from "./midi.js";
 import { BATCH_SOURCE_LAYER, batchMeshes } from "./batching.js";
-import { applyHallCameraLimits, clampToHall, loadHall, prepareHall } from "./hall.js";
+import {
+  applyHallCameraLimits,
+  clampToHall,
+  createStageShadowCatcher,
+  loadHall,
+  prepareHall,
+} from "./hall.js";
 
 import {
   CAMERA_AUTHORING,
@@ -106,6 +112,8 @@ renderer.shadowMap.needsUpdate = true;
 viewport.appendChild(renderer.domElement);
 
 setupEnvironment(renderer, scene);
+/** @type {THREE.Mesh | null} */
+let stageShadow = null;
 const studioDome = scene.getObjectByName("Studio_Dome");
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -806,8 +814,8 @@ function setStage(kind, { remember = false } = {}) {
   if (hall) hall.root.visible = inHall;
   if (studioFloor) studioFloor.visible = !inHall;
   if (studioDome) studioDome.visible = !inHall;
-  // The stage boards take the real shadow; the soft blob is for the glass floor.
-  if (contactShadow) contactShadow.visible = !inHall;
+  // The baked stage can't sample the shadow map; a catcher plane carries it.
+  if (stageShadow) stageShadow.visible = inHall;
   if (studioLimits) applyHallCameraLimits(camera, controls, inHall, studioLimits);
   ui.viewHouse.hidden = !inHall;
   for (const [btn, on] of [[ui.stageHall, inHall], [ui.stageStudio, !inHall]]) {
@@ -879,6 +887,8 @@ async function init() {
   if (hallScene) {
     hall = prepareHall(hallScene, model);
     scene.add(hall.root);
+    stageShadow = createStageShadowCatcher(model);
+    scene.add(stageShadow);
     ui.stageControls.hidden = false;
     ui.stageHall.addEventListener("click", () => {
       setStage("hall", { remember: true });

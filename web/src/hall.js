@@ -4,8 +4,9 @@
  * The hall is generated in Blender by scripts/build_carnegie_hall.py in the
  * piano's own world frame (stage top under the feet, house toward +X), so it
  * lines up by taking the same framing transform frameModel gave the piano.
- * Its Hall_Light vertex colours carry a baked stage-to-house falloff; the
- * viewer's piano lights then light it like everything else.
+ * Its Hall_Light vertex colours carry lighting baked in Cycles (stage wash,
+ * house lamps, bounce and occlusion), so the room is drawn unlit — far
+ * cheaper per pixel than lit PBR on surfaces that fill the screen.
  */
 import * as THREE from "three";
 
@@ -18,6 +19,12 @@ const HALL_MAX_DISTANCE = 24;
 const HALL_WALL_MARGIN = 0.6;
 /** DOME_H in build_carnegie_hall.py: how far the dome rises above the ceiling. */
 const HALL_DOME_RISE = 2.8;
+/** Brightness of the baked lighting (the bake puts typical surfaces near 0.5). */
+const HALL_EXPOSURE = 1.3;
+/** Gilt leaf reads brighter than its albedo under stage light. */
+const GILT_GAIN = 1.3;
+/** Self-lit lamps and exit signs, pushed past white so ACES blooms them warm. */
+const LAMP_GAIN = 3.0;
 
 /**
  * Load the hall. Resolves null when it's missing or broken so the viewer
@@ -54,11 +61,13 @@ export function prepareHall(hall, piano) {
 
   hall.traverse((obj) => {
     if (!obj.isMesh) return;
-    obj.material = refineHallMaterial(obj.material);
-    // Only the stage takes the piano's shadow; nothing in the hall casts (the
-    // shadow camera only covers the piano anyway).
+    const old = obj.material;
+    obj.material = hallMaterial(old);
+    if (obj.material !== old) old.dispose();
+    // Baked surfaces can't take the shadow map; the piano's shadow lands on
+    // a catcher plane instead (createStageShadowCatcher).
     obj.castShadow = false;
-    obj.receiveShadow = /stage/i.test(obj.name);
+    obj.receiveShadow = false;
     obj.matrixAutoUpdate = false;
   });
 
@@ -74,26 +83,49 @@ export function prepareHall(hall, piano) {
   return { root: hall, bounds };
 }
 
-/** @param {THREE.Material} mat */
-function refineHallMaterial(mat) {
+/**
+ * Every hall surface becomes unlit MeshBasicMaterial: albedo x baked light.
+ * @param {THREE.Material} mat
+ */
+function hallMaterial(mat) {
   if (!mat?.isMeshStandardMaterial) return mat;
   const name = mat.name || "";
-  // Winding is not curated in the procedural build; DoubleSide also flips the
-  // normal for back faces, so shading stays correct either way.
-  mat.side = THREE.DoubleSide;
-  // The studio IBL is a softbox room; keep its reflections faint on the set.
-  mat.envMapIntensity = 0.25;
-  if (/bulb/i.test(name)) {
-    mat.emissiveIntensity = 1.4;
-    mat.toneMapped = true;
-  } else if (/gold/i.test(name)) {
-    mat.envMapIntensity = 0.9;
-    mat.roughness = 0.38;
-  } else if (/stage_wood/i.test(name)) {
-    mat.envMapIntensity = 0.45;
-  }
-  mat.needsUpdate = true;
-  return mat;
+  const lamp = /bulb|exit/i.test(name);
+  const gain = lamp ? LAMP_GAIN : HALL_EXPOSURE * (/gold/i.test(name) ? GILT_GAIN : 1);
+  return new THREE.MeshBasicMaterial({
+    name,
+    color: mat.color.clone().multiplyScalar(gain),
+    vertexColors: !lamp,
+    // Winding isn't curated in the procedural build.
+    side: THREE.DoubleSide,
+  });
+}
+
+/**
+ * Transparent plane that only shows the piano's shadow on the baked stage.
+ * @param {THREE.Object3D} piano
+ */
+export function createStageShadowCatcher(piano) {
+  const box = new THREE.Box3().setFromObject(piano);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const catcher = new THREE.Mesh(
+    new THREE.PlaneGeometry(size.x * 2.6, size.z * 2.6),
+    new THREE.ShadowMaterial({
+      opacity: 0.4,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -1,
+      polygonOffsetUnits: -1,
+    }),
+  );
+  catcher.name = "Stage_Shadow_Catcher";
+  catcher.rotation.x = -Math.PI / 2;
+  // Between the boards (−3 mm) and the contact blob, like the studio stack.
+  catcher.position.set(center.x, 0.0008, center.z);
+  catcher.receiveShadow = true;
+  catcher.renderOrder = 1;
+  return catcher;
 }
 
 /**
